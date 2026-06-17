@@ -94,6 +94,7 @@ let map, markerLayer, heatLayer, selectedZone = ZONES[0], selectedWindow = 'day'
 let forecast = null;
 let particles = [];
 let animationFrame = null;
+let lastWindFrame = 0;
 
 const els = {
   chipbar: document.querySelector('#chipbar'),
@@ -452,63 +453,114 @@ function resizeCanvas() {
   els.canvas.style.height = `${rect.height}px`;
   els.canvas.width = Math.max(1, Math.floor(rect.width * ratio));
   els.canvas.height = Math.max(1, Math.floor(rect.height * ratio));
-  els.canvas.getContext('2d').setTransform(ratio, 0, 0, ratio, 0, 0);
+  const ctx = els.canvas.getContext('2d');
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, rect.width, rect.height);
   initWindParticles();
 }
 
 function initWindParticles() {
   if (!els.canvas || !map) return;
   const rect = map.getContainer().getBoundingClientRect();
-  const count = Math.max(90, Math.min(380, Math.floor(rect.width * rect.height / 3300)));
-  particles = Array.from({ length: count }, () => ({
-    x: Math.random() * rect.width,
-    y: Math.random() * rect.height,
-    life: 40 + Math.random() * 100,
-    wobble: Math.random() * 1000
-  }));
+  const count = Math.max(120, Math.min(520, Math.floor(rect.width * rect.height / 2600)));
+  particles = Array.from({ length: count }, () => createWindParticle(rect, true));
 }
 
-function animateWind() {
+function createWindParticle(rect, anywhere = false) {
+  const s = forecast?.days[selectedDayIndex]?.windows[selectedWindow];
+  const dir = s ? s.dir : 270;
+
+  // Open-Meteo gives the direction wind comes FROM. The animation moves TO the opposite side.
+  const rad = ((dir + 180) * Math.PI / 180);
+  const vx = Math.sin(rad);
+  const vy = -Math.cos(rad);
+  const margin = 36;
+
+  if (anywhere) {
+    return {
+      x: Math.random() * rect.width,
+      y: Math.random() * rect.height,
+      age: Math.random() * 120,
+      life: 80 + Math.random() * 120,
+      wobble: Math.random() * 1000
+    };
+  }
+
+  let x;
+  let y;
+  if (Math.abs(vx) > Math.abs(vy)) {
+    x = vx > 0 ? -margin : rect.width + margin;
+    y = Math.random() * rect.height;
+  } else {
+    x = Math.random() * rect.width;
+    y = vy > 0 ? -margin : rect.height + margin;
+  }
+
+  return {
+    x,
+    y,
+    age: 0,
+    life: 80 + Math.random() * 120,
+    wobble: Math.random() * 1000
+  };
+}
+
+function animateWind(now = performance.now()) {
   if (!els.canvas || !map) return;
+
+  // Cap the animation a little. It keeps the effect calm and avoids harsh jumps on slower devices.
+  if (now - lastWindFrame < 28) {
+    animationFrame = requestAnimationFrame(animateWind);
+    return;
+  }
+  lastWindFrame = now;
+
   const ctx = els.canvas.getContext('2d');
   const rect = map.getContainer().getBoundingClientRect();
-  ctx.clearRect(0, 0, rect.width, rect.height);
-
   const s = forecast?.days[selectedDayIndex]?.windows[selectedWindow];
   const windKmh = s ? s.wind : 14;
   const gustKmh = s ? s.gust : windKmh;
 
-  // Open-Meteo wind direction is the direction the wind comes FROM.
-  // The particles should move TO the opposite direction, so add 180 degrees.
+  // Fade previous lines instead of clearing the whole canvas. This creates a softer Windy-like trail.
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.88)';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  ctx.globalCompositeOperation = 'source-over';
+
   const rad = s ? ((s.dir + 180) * Math.PI / 180) : 0;
-  const speed = clamp(0.11 * windKmh + 0.7, 1.2, 9.5);
-  const tail = clamp(5 + windKmh * 0.38, 7, 26);
-  const alphaBase = clamp(0.24 + windKmh / 80, 0.32, 0.88);
+  const speed = clamp(0.075 * windKmh + 0.45, 0.85, 5.2);
+  const tail = clamp(4 + windKmh * 0.24, 6, 18);
+  const alphaBase = clamp(0.16 + windKmh / 120, 0.20, 0.56);
   const vx = Math.sin(rad) * speed;
   const vy = -Math.cos(rad) * speed;
 
-  ctx.lineWidth = clamp(1.1 + gustKmh / 80, 1.2, 2.2);
+  ctx.lineWidth = clamp(0.75 + gustKmh / 150, 0.85, 1.65);
   ctx.lineCap = 'round';
 
-  particles.forEach(p => {
-    const oldX = p.x - Math.sin(rad) * tail;
-    const oldY = p.y + Math.cos(rad) * tail;
-    const wobble = Date.now() / 650 + p.wobble;
-    p.x += vx + Math.sin((p.y + wobble) / 54) * 0.42;
-    p.y += vy + Math.cos((p.x + wobble) / 64) * 0.32;
-    p.life -= 1;
+  particles.forEach((p, index) => {
+    const prevX = p.x;
+    const prevY = p.y;
+    const wobble = now / 900 + p.wobble;
 
-    if (p.x < -40 || p.x > rect.width + 40 || p.y < -40 || p.y > rect.height + 40 || p.life <= 0) {
-      p.x = Math.random() * rect.width;
-      p.y = Math.random() * rect.height;
-      p.life = 55 + Math.random() * 110;
-      p.wobble = Math.random() * 1000;
+    p.x += vx + Math.sin((p.y + wobble) / 58) * 0.22;
+    p.y += vy + Math.cos((p.x + wobble) / 70) * 0.18;
+    p.age += 1;
+
+    const outside = p.x < -50 || p.x > rect.width + 50 || p.y < -50 || p.y > rect.height + 50;
+    if (outside || p.age > p.life) {
+      // Important: do not draw from the old position to this random new position.
+      // That was the cause of the long diagonal streaks across the whole map.
+      particles[index] = createWindParticle(rect, false);
+      return;
     }
 
-    const alpha = clamp((p.life / 120) * alphaBase, 0.12, 0.9);
-    ctx.strokeStyle = `rgba(235,248,255,${alpha})`;
+    const fadeIn = clamp(p.age / 24, 0, 1);
+    const fadeOut = clamp((p.life - p.age) / 32, 0, 1);
+    const alpha = clamp(alphaBase * fadeIn * fadeOut, 0.04, 0.55);
+
+    ctx.strokeStyle = `rgba(226, 246, 255, ${alpha})`;
     ctx.beginPath();
-    ctx.moveTo(oldX, oldY);
+    ctx.moveTo(prevX - Math.sin(rad) * tail * 0.25, prevY + Math.cos(rad) * tail * 0.25);
     ctx.lineTo(p.x, p.y);
     ctx.stroke();
   });
@@ -518,6 +570,7 @@ function animateWind() {
 
 function stopWind() {
   if (animationFrame) cancelAnimationFrame(animationFrame);
+  animationFrame = null;
 }
 
 function readCache(key, maxAge) {
