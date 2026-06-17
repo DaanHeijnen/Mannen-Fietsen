@@ -57,9 +57,3 @@ README.md
 ## Notes
 
 This is not a global Windy clone. It is intentionally narrowed to cycling conditions in the top half of the Netherlands. That makes the app simpler, faster and more useful for the exact decision: “When should I go cycling next week?”
-
-
-## Latest changes
-
-- Keeps the hard map rendering fix and adds extra mobile resize/orientation handling so Leaflet recalculates its tile grid after the responsive layout changes.
-- Adds expandable day rows. Click any future day to open an hourly rain forecast with rain probability and predicted mm for each hour.
