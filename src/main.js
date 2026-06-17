@@ -147,23 +147,39 @@ function initControls() {
 }
 
 function initMap() {
+  // Netlify deploy previews can render Leaflet inside an iframe/toolbar wrapper.
+  // Disabling 3D tile transforms prevents the broken checkerboard tile layout seen in the preview.
+  if (L?.Browser) L.Browser.any3d = false;
+
   map = L.map('map', {
     zoomControl: false,
     minZoom: 7,
     maxZoom: 13,
     preferCanvas: true,
-    worldCopyJump: false
+    worldCopyJump: false,
+    zoomAnimation: false,
+    fadeAnimation: false,
+    markerZoomAnimation: false,
+    inertia: false
   }).setView([53.13, 5.65], 8);
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    subdomains: 'abcd',
+  const baseTiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO | Weather data by Open-Meteo',
+    tileSize: 256,
+    zoomOffset: 0,
+    detectRetina: false,
+    attribution: '&copy; OpenStreetMap contributors | Weather data by Open-Meteo',
     crossOrigin: true,
-    updateWhenIdle: false,
+    updateWhenIdle: true,
     updateWhenZooming: false,
-    keepBuffer: 4
+    keepBuffer: 8,
+    className: 'base-map-tile'
   }).addTo(map);
+
+  baseTiles.on('tileerror', event => {
+    // Hide failed images instead of leaving broken/patchy blocks.
+    event.tile.style.visibility = 'hidden';
+  });
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   markerLayer = L.layerGroup().addTo(map);
