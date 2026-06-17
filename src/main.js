@@ -522,7 +522,7 @@ function resizeCanvas() {
 function initWindParticles() {
   if (!els.canvas || !map) return;
   const rect = map.getContainer().getBoundingClientRect();
-  const count = Math.max(120, Math.min(520, Math.floor(rect.width * rect.height / 2600)));
+  const count = Math.max(150, Math.min(620, Math.floor(rect.width * rect.height / 2200)));
   particles = Array.from({ length: count }, () => createWindParticle(rect, true));
 }
 
@@ -537,11 +537,12 @@ function createWindParticle(rect, anywhere = false) {
   const margin = 24;
 
   if (anywhere) {
+    const life = 150 + Math.random() * 240;
     return {
       x: Math.random() * rect.width,
       y: Math.random() * rect.height,
-      age: Math.random() * 120,
-      life: 80 + Math.random() * 120,
+      age: Math.random() * life * 0.55,
+      life,
       wobble: Math.random() * 1000
     };
   }
@@ -630,6 +631,10 @@ function animateWind(now = performance.now()) {
   ctx.lineWidth = clamp(0.75 + gustKmh / 150, 0.85, 1.65);
   ctx.lineCap = 'round';
 
+  // Keep the field evenly populated. Without this, long-lived particles can
+  // drift off-screen together and the visible wind appears stuck near one edge.
+  let visibleParticles = 0;
+
   particles.forEach((p, index) => {
     const prevX = p.x;
     const prevY = p.y;
@@ -640,10 +645,12 @@ function animateWind(now = performance.now()) {
     p.age += 1;
 
     const outside = p.x < -50 || p.x > rect.width + 50 || p.y < -50 || p.y > rect.height + 50;
+    if (!outside) visibleParticles += 1;
     if (outside || p.age > p.life) {
-      // Important: do not draw from the old position to this random new position.
-      // That was the cause of the long diagonal streaks across the whole map.
-      particles[index] = createWindParticle(rect, Math.random() < 0.12);
+      // Important: do not draw from the old position to this new position.
+      // Respawn across the whole viewport instead of only at the entry edge,
+      // otherwise the animation slowly collects at one side of the map.
+      particles[index] = createWindParticle(rect, true);
       return;
     }
 
@@ -657,6 +664,13 @@ function animateWind(now = performance.now()) {
     ctx.lineTo(p.x, p.y);
     ctx.stroke();
   });
+
+  if (visibleParticles < particles.length * 0.45) {
+    const refillCount = Math.ceil(particles.length * 0.18);
+    for (let i = 0; i < refillCount; i += 1) {
+      particles[Math.floor(Math.random() * particles.length)] = createWindParticle(rect, true);
+    }
+  }
 
   animationFrame = requestAnimationFrame(animateWind);
 }
