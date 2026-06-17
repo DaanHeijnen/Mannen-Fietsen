@@ -147,35 +147,38 @@ function initControls() {
 }
 
 function initMap() {
+  // Netlify deploy previews can render Leaflet inside an iframe/toolbar wrapper.
+  // Disabling 3D tile transforms prevents the broken checkerboard tile layout seen in the preview.
+  if (L?.Browser) L.Browser.any3d = false;
+
   map = L.map('map', {
     zoomControl: false,
     minZoom: 7,
     maxZoom: 13,
     preferCanvas: true,
-    worldCopyJump: false
+    worldCopyJump: false,
+    zoomAnimation: false,
+    fadeAnimation: false,
+    markerZoomAnimation: false,
+    inertia: false
   }).setView([53.13, 5.65], 8);
 
-  // Use one stable tile endpoint instead of rotating over a/b/c/d subdomains.
-  // In Netlify previews some CARTO subdomain tile requests can fail or arrive late,
-  // which leaves the map looking like scattered square blocks. A single endpoint
-  // is slightly less fancy, but much more reliable for this small app.
-  const baseTiles = L.tileLayer('https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
+  const baseTiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO | Weather data by Open-Meteo',
-    crossOrigin: false,
+    tileSize: 256,
+    zoomOffset: 0,
+    detectRetina: false,
+    attribution: '&copy; OpenStreetMap contributors | Weather data by Open-Meteo',
+    crossOrigin: true,
     updateWhenIdle: true,
     updateWhenZooming: false,
-    keepBuffer: 6,
-    tileSize: 256
+    keepBuffer: 8,
+    className: 'base-map-tile'
   }).addTo(map);
 
   baseTiles.on('tileerror', event => {
-    // Last-resort fallback for a failed dark tile. This prevents blue holes in the map.
-    const img = event.tile;
-    if (!img.dataset.fallback) {
-      img.dataset.fallback = '1';
-      img.src = img.src.replace('https://basemaps.cartocdn.com', 'https://a.basemaps.cartocdn.com');
-    }
+    // Hide failed images instead of leaving broken/patchy blocks.
+    event.tile.style.visibility = 'hidden';
   });
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);

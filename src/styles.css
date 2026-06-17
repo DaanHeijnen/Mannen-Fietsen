@@ -102,3 +102,29 @@ button, input, select { font: inherit; }
   .bottompanel { position: relative; left: auto; right: auto; bottom: auto; grid-template-columns: 1fr; padding: 0 12px 12px; z-index: 4; }
   .detail-grid { grid-template-columns: repeat(2,1fr); }
 }
+
+/* Leaflet hardening: keeps the tile grid stable in Netlify deploy previews and darkens OSM tiles. */
+.leaflet-pane,
+.leaflet-tile,
+.leaflet-marker-icon,
+.leaflet-marker-shadow,
+.leaflet-tile-container,
+.leaflet-pane > svg,
+.leaflet-pane > canvas,
+.leaflet-zoom-box,
+.leaflet-image-layer,
+.leaflet-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+.leaflet-container img.leaflet-tile {
+  max-width: none !important;
+  max-height: none !important;
+  width: 256px !important;
+  height: 256px !important;
+  transform-origin: 0 0 !important;
+}
+.base-map-tile {
+  filter: invert(1) hue-rotate(180deg) brightness(.72) contrast(.96) saturate(.65);
+}
