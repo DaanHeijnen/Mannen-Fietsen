@@ -43,11 +43,15 @@ app.innerHTML = `
     <div id="chipbar" class="chipbar"></div>
   </div>
   <div id="status" class="status"></div>
+  <div id="predictionNotice" class="prediction-notice" hidden>
+    <span id="predictionNoticeText">Showing predictions</span>
+    <button id="backToCurrentBtn" type="button">Back to current conditions</button>
+  </div>
   <section class="sidepanel">
     <article class="card hero">
       <div class="hero-head">
         <div>
-          <div class="eyebrow">Best cycling window</div>
+          <div class="eyebrow">Current conditions</div>
           <h2 id="heroTitle">Loading...</h2>
           <div id="heroSub" class="sub">Fetching Open-Meteo forecast for northern Netherlands.</div>
         </div>
@@ -90,7 +94,7 @@ app.innerHTML = `
   </section>
 `;
 
-let map, markerLayer, heatLayer, selectedZone = ZONES[0], selectedWindow = 'day', selectedDayIndex = 0;
+let map, markerLayer, heatLayer, pinLayer, selectedZone = ZONES[0], selectedWindow = 'day', selectedDayIndex = 0;
 let forecast = null;
 let particles = [];
 let animationFrame = null;
@@ -99,6 +103,7 @@ let lastWindDrawAt = 0;
 let windWatchdogTimer = null;
 let mapResizeObserver = null;
 let mapResizeTimer = null;
+let activePin = null;
 
 const els = {
   chipbar: document.querySelector('#chipbar'),
@@ -106,6 +111,9 @@ const els = {
   windowSelect: document.querySelector('#windowSelect'),
   windows: document.querySelector('#windows'),
   status: document.querySelector('#status'),
+  predictionNotice: document.querySelector('#predictionNotice'),
+  predictionNoticeText: document.querySelector('#predictionNoticeText'),
+  backToCurrentBtn: document.querySelector('#backToCurrentBtn'),
   heroTitle: document.querySelector('#heroTitle'),
   heroSub: document.querySelector('#heroSub'),
   scoreBubble: document.querySelector('#scoreBubble'),
@@ -162,6 +170,7 @@ function initControls() {
     selectedDayIndex = 0;
     renderAll();
   });
+  els.backToCurrentBtn.addEventListener('click', backToCurrentConditions);
   els.searchBtn.addEventListener('click', searchPlace);
   els.searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') searchPlace(); });
 }
@@ -207,6 +216,7 @@ function initMap() {
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   markerLayer = L.layerGroup().addTo(map);
   heatLayer = L.layerGroup().addTo(map);
+  pinLayer = L.layerGroup().addTo(map);
 
   // Keep the wind animation attached to the map container itself.
   // This fixes the bug where the canvas sits outside Leaflet and the map tiles render in broken blocks.
@@ -218,6 +228,7 @@ function initMap() {
   renderMarkers();
 
   map.on('moveend zoomend resize', () => scheduleMapRefresh(20));
+  map.on('click', handleMapClick);
 
   const mapEl = map.getContainer();
   if ('ResizeObserver' in window) {
@@ -247,6 +258,7 @@ async function setZone(id) {
   els.zoneSelect.value = selectedZone.id;
   [...els.chipbar.querySelectorAll('.chip')].forEach(b => b.classList.toggle('active', b.dataset.zone === selectedZone.id));
   map.setView([selectedZone.lat, selectedZone.lon], selectedZone.zoom);
+  clearActivePin();
   await loadForecast(selectedZone);
 }
 
@@ -263,6 +275,7 @@ async function searchPlace() {
     els.zoneSelect.value = ZONES[0].id;
     [...els.chipbar.querySelectorAll('.chip')].forEach(b => b.classList.remove('active'));
     map.setView([selectedZone.lat, selectedZone.lon], 10);
+    clearActivePin();
     await loadForecast(selectedZone);
   } catch (err) {
     console.error(err);
@@ -389,20 +402,25 @@ function renderAll() {
   renderHero();
   renderWindows();
   renderDetail();
+  renderPredictionNotice();
   drawWeatherOverlay();
+  refreshActivePin();
 }
 
 function renderHero() {
-  const best = getBestWindow();
-  els.heroTitle.textContent = `${dayLabel(best.day.date)} ${WINDOWS[best.summary.id].label.toLowerCase()}`;
-  els.heroSub.textContent = `${forecast.zone.name}: ${adviceText(best.summary)}.`;
-  els.scoreBubble.style.setProperty('--score', best.summary.score);
-  els.scoreBubble.querySelector('span').textContent = best.summary.score;
-  els.mRain.textContent = `${Math.round(best.summary.rainProb)}% / ${formatRainMm(best.summary.rainAmount, best.summary.rainProb)}/h`;
-  els.mWind.textContent = `${Math.round(best.summary.wind)} km/h`;
-  els.mGust.textContent = `${Math.round(best.summary.gust)} km/h`;
-  els.mConfidence.textContent = `${best.summary.confidence}%`;
-  els.routeTip.textContent = routeTip(best.summary.dir, best.summary.wind, best.summary.gust);
+  const current = getCurrentConditionsSummary();
+  if (!current) return;
+  const h = current.hour;
+  const s = current.summary;
+  els.heroTitle.textContent = `Now in ${forecast.zone.name}`;
+  els.heroSub.textContent = `${Math.round(h.temp)}°C · ${weatherDescription(h.code)} · ${Math.round(h.rainProb)}% rain risk.`;
+  els.scoreBubble.style.setProperty('--score', s.score);
+  els.scoreBubble.querySelector('span').textContent = s.score;
+  els.mRain.textContent = `${Math.round(h.rainProb)}% / ${formatRainMm(Math.max(h.precip, h.rain), h.rainProb)}`;
+  els.mWind.textContent = `${Math.round(h.wind)} km/h`;
+  els.mGust.textContent = `${Math.round(h.gust)} km/h`;
+  els.mConfidence.textContent = `${s.confidence}%`;
+  els.routeTip.textContent = routeTip(h.dir, h.wind, h.gust);
 }
 
 function renderWindows() {
@@ -454,8 +472,136 @@ function renderDetail() {
   els.detailTitle.textContent = `${dateLong(day.date)} · ${WINDOWS[selectedWindow].label} · ${forecast.zone.name}`;
   els.dScore.textContent = `${s.score}/100 ${s.grade}`;
   els.dRain.textContent = `${Math.round(s.rainProb)}%, ${formatRainMm(s.rainAmount, s.rainProb)}/h`;
-  els.dWind.textContent = `${Math.round(s.wind)} km/h, gusts ${Math.round(s.gust)}`;
+  els.dWind.textContent = `${Math.round(s.wind)} km/h, gusts ${Math.round(s.gust)} km/h`;
   els.dDir.textContent = `${compass(s.dir)} (${Math.round(s.dir)}°)`;
+}
+
+function renderPredictionNotice() {
+  if (!forecast || selectedDayIndex === 0) {
+    els.predictionNotice.hidden = true;
+    return;
+  }
+  const day = forecast.days[selectedDayIndex];
+  els.predictionNoticeText.textContent = `Showing predictions for ${dateLong(day.date)}`;
+  els.predictionNotice.hidden = false;
+}
+
+function backToCurrentConditions() {
+  selectedDayIndex = 0;
+  renderAll();
+  startWind(false);
+}
+
+function getCurrentConditionsSummary(sourceForecast = forecast) {
+  if (!sourceForecast?.hours?.length) return null;
+  const now = new Date();
+  let hour = sourceForecast.hours[0];
+  let bestDiff = Math.abs(hour.time - now);
+  sourceForecast.hours.forEach(row => {
+    const diff = Math.abs(row.time - now);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      hour = row;
+    }
+  });
+  const dayIndex = Math.max(0, sourceForecast.days.findIndex(day => day.key === hour.iso.slice(0, 10)));
+  const summary = summarizeWindow([hour], dayIndex, 'current');
+  return { hour, summary, dayIndex };
+}
+
+function getSelectedForecastSummary(sourceForecast = forecast) {
+  if (!sourceForecast) return null;
+  if (selectedDayIndex === 0) return getCurrentConditionsSummary(sourceForecast);
+  const day = sourceForecast.days[selectedDayIndex] || sourceForecast.days[0];
+  const summary = day.windows[selectedWindow];
+  return { hour: findBestHourForWindow(day, selectedWindow), summary, dayIndex: selectedDayIndex, day };
+}
+
+function findBestHourForWindow(day, windowId) {
+  const w = WINDOWS[windowId] || WINDOWS.day;
+  const hours = day.items.filter(row => row.time.getHours() >= w.start && row.time.getHours() < w.end);
+  if (!hours.length) return day.items[0];
+  const targetHour = Math.round((w.start + w.end) / 2);
+  return hours.reduce((best, row) => Math.abs(row.time.getHours() - targetHour) < Math.abs(best.time.getHours() - targetHour) ? row : best, hours[0]);
+}
+
+function weatherDescription(code) {
+  if ([0].includes(code)) return 'Clear';
+  if ([1, 2, 3].includes(code)) return 'Cloudy';
+  if ([45, 48].includes(code)) return 'Fog';
+  if ([51, 53, 55, 56, 57].includes(code)) return 'Drizzle';
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return 'Rain';
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return 'Snow';
+  if ([95, 96, 99].includes(code)) return 'Thunderstorm';
+  return 'Forecast';
+}
+
+async function handleMapClick(event) {
+  if (!event?.latlng) return;
+  const { lat, lng } = event.latlng;
+  setPinLoading(lat, lng);
+  try {
+    const data = await getForecast(lat, lng);
+    const pinForecast = transformForecast(data, { id: 'pin', name: 'Dropped pin', short: 'Pin', lat, lon: lng, zoom: map.getZoom() });
+    const selection = getSelectedForecastSummary(pinForecast);
+    activePin = { lat, lon: lng, forecast: pinForecast };
+    renderPin(selection);
+  } catch (err) {
+    console.error(err);
+    setPinError(lat, lng);
+  }
+}
+
+function setPinLoading(lat, lon) {
+  if (!pinLayer) return;
+  pinLayer.clearLayers();
+  activePin = { lat, lon, forecast: null };
+  L.marker([lat, lon], { icon: pinIcon('Loading...') })
+    .addTo(pinLayer)
+    .bindTooltip('Loading wind...', { permanent: true, direction: 'top', offset: [0, -18], className: 'wind-pin-tooltip' })
+    .openTooltip();
+}
+
+function renderPin(selection) {
+  if (!activePin || !pinLayer || !selection?.summary) return;
+  const s = selection.summary;
+  const label = selectedDayIndex === 0
+    ? `Now: ${Math.round(s.wind)} km/h · gusts ${Math.round(s.gust)} km/h`
+    : `${dateShort(forecast.days[selectedDayIndex].date)} ${WINDOWS[selectedWindow].label}: ${Math.round(s.wind)} km/h · gusts ${Math.round(s.gust)} km/h`;
+
+  pinLayer.clearLayers();
+  L.marker([activePin.lat, activePin.lon], { icon: pinIcon(`${Math.round(s.wind)} km/h`) })
+    .addTo(pinLayer)
+    .bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -20], className: 'wind-pin-tooltip' })
+    .openTooltip();
+}
+
+function refreshActivePin() {
+  if (!activePin?.forecast) return;
+  renderPin(getSelectedForecastSummary(activePin.forecast));
+}
+
+function setPinError(lat, lon) {
+  if (!pinLayer) return;
+  pinLayer.clearLayers();
+  L.marker([lat, lon], { icon: pinIcon('Error') })
+    .addTo(pinLayer)
+    .bindTooltip('Could not load wind for this point', { permanent: true, direction: 'top', offset: [0, -18], className: 'wind-pin-tooltip' })
+    .openTooltip();
+}
+
+function clearActivePin() {
+  activePin = null;
+  pinLayer?.clearLayers();
+}
+
+function pinIcon(text) {
+  return L.divIcon({
+    className: '',
+    html: `<div class="wind-pin"><span>${text}</span></div>`,
+    iconSize: [74, 38],
+    iconAnchor: [37, 38]
+  });
 }
 
 function renderError() {
