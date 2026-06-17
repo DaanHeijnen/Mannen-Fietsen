@@ -95,6 +95,8 @@ let forecast = null;
 let particles = [];
 let animationFrame = null;
 let lastWindFrame = 0;
+let lastWindDrawAt = 0;
+let windWatchdogTimer = null;
 let mapResizeObserver = null;
 let mapResizeTimer = null;
 
@@ -140,6 +142,9 @@ function init() {
   window.addEventListener('resize', () => scheduleMapRefresh(80));
   window.addEventListener('orientationchange', () => scheduleMapRefresh(350));
   window.visualViewport?.addEventListener('resize', () => scheduleMapRefresh(120));
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && forecast) startWind(false);
+  });
   loadForecast(selectedZone);
 }
 
@@ -274,8 +279,7 @@ async function loadForecast(zone) {
     showStatus(`Forecast loaded for ${zone.name}.`);
     setTimeout(hideStatus, 1400);
     renderAll();
-    initWindParticles();
-    animateWind();
+    startWind();
   } catch (err) {
     console.error(err);
     showStatus('Open-Meteo forecast could not be loaded. The app is running, but weather data failed. Try refreshing.', true);
@@ -512,6 +516,7 @@ function resizeCanvas() {
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, rect.width, rect.height);
   initWindParticles();
+  ensureWindRunning();
 }
 
 function initWindParticles() {
@@ -529,7 +534,7 @@ function createWindParticle(rect, anywhere = false) {
   const rad = ((dir + 180) * Math.PI / 180);
   const vx = Math.sin(rad);
   const vy = -Math.cos(rad);
-  const margin = 36;
+  const margin = 24;
 
   if (anywhere) {
     return {
@@ -543,25 +548,53 @@ function createWindParticle(rect, anywhere = false) {
 
   let x;
   let y;
+  const entryJitter = Math.random() * 42;
   if (Math.abs(vx) > Math.abs(vy)) {
-    x = vx > 0 ? -margin : rect.width + margin;
+    x = vx > 0 ? -margin + entryJitter : rect.width + margin - entryJitter;
     y = Math.random() * rect.height;
   } else {
     x = Math.random() * rect.width;
-    y = vy > 0 ? -margin : rect.height + margin;
+    y = vy > 0 ? -margin + entryJitter : rect.height + margin - entryJitter;
   }
 
   return {
     x,
     y,
-    age: 0,
-    life: 80 + Math.random() * 120,
+    age: Math.random() * 8,
+    life: 110 + Math.random() * 170,
     wobble: Math.random() * 1000
   };
 }
 
-function animateWind(now = performance.now()) {
+function startWind(resetParticles = true) {
   if (!els.canvas || !map) return;
+  if (animationFrame) cancelAnimationFrame(animationFrame);
+  animationFrame = null;
+  lastWindFrame = 0;
+  if (resetParticles || !particles.length) initWindParticles();
+  animationFrame = requestAnimationFrame(animateWind);
+  startWindWatchdog();
+}
+
+function ensureWindRunning() {
+  if (!forecast || document.hidden) return;
+  if (!animationFrame) startWind(false);
+}
+
+function startWindWatchdog() {
+  if (windWatchdogTimer) return;
+  windWatchdogTimer = setInterval(() => {
+    if (!forecast || document.hidden) return;
+    const stale = !animationFrame || performance.now() - lastWindDrawAt > 2200;
+    if (stale) startWind(false);
+  }, 1500);
+}
+
+function animateWind(now = performance.now()) {
+  if (!els.canvas || !map) {
+    animationFrame = requestAnimationFrame(animateWind);
+    return;
+  }
 
   // Cap the animation a little. It keeps the effect calm and avoids harsh jumps on slower devices.
   if (now - lastWindFrame < 28) {
@@ -572,6 +605,11 @@ function animateWind(now = performance.now()) {
 
   const ctx = els.canvas.getContext('2d');
   const rect = map.getContainer().getBoundingClientRect();
+  if (rect.width < 2 || rect.height < 2) {
+    animationFrame = requestAnimationFrame(animateWind);
+    return;
+  }
+  lastWindDrawAt = now;
   const s = forecast?.days[selectedDayIndex]?.windows[selectedWindow];
   const windKmh = s ? s.wind : 14;
   const gustKmh = s ? s.gust : windKmh;
@@ -605,11 +643,11 @@ function animateWind(now = performance.now()) {
     if (outside || p.age > p.life) {
       // Important: do not draw from the old position to this random new position.
       // That was the cause of the long diagonal streaks across the whole map.
-      particles[index] = createWindParticle(rect, false);
+      particles[index] = createWindParticle(rect, Math.random() < 0.12);
       return;
     }
 
-    const fadeIn = clamp(p.age / 24, 0, 1);
+    const fadeIn = clamp((p.age + 6) / 20, 0, 1);
     const fadeOut = clamp((p.life - p.age) / 32, 0, 1);
     const alpha = clamp(alphaBase * fadeIn * fadeOut, 0.04, 0.55);
 
