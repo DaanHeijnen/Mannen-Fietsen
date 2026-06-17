@@ -394,7 +394,7 @@ function renderHero() {
   els.heroSub.textContent = `${forecast.zone.name}: ${adviceText(best.summary)}.`;
   els.scoreBubble.style.setProperty('--score', best.summary.score);
   els.scoreBubble.querySelector('span').textContent = best.summary.score;
-  els.mRain.textContent = `${Math.round(best.summary.rainProb)}% / ${formatRainMm(best.summary.rainAmount)}/h`;
+  els.mRain.textContent = `${Math.round(best.summary.rainProb)}% / ${formatRainMm(best.summary.rainAmount, best.summary.rainProb)}/h`;
   els.mWind.textContent = `${Math.round(best.summary.wind)} km/h`;
   els.mGust.textContent = `${Math.round(best.summary.gust)} km/h`;
   els.mConfidence.textContent = `${best.summary.confidence}%`;
@@ -429,7 +429,7 @@ function renderHourlyRain(day) {
     const amount = Math.max(hour.precip, hour.rain);
     const prob = Math.round(hour.rainProb);
     const rainWidth = clamp(prob, 2, 100);
-    const amountText = formatRainMm(amount);
+    const amountText = formatRainMm(amount, prob).replace('<', '&lt;');
     return `<div class="hour-row">
       <span class="hour-time">${hourLabel(hour.time)}</span>
       <span class="hour-rainbar"><i style="width:${rainWidth}%"></i></span>
@@ -449,7 +449,7 @@ function renderDetail() {
   const s = day.windows[selectedWindow];
   els.detailTitle.textContent = `${dateLong(day.date)} · ${WINDOWS[selectedWindow].label} · ${forecast.zone.name}`;
   els.dScore.textContent = `${s.score}/100 ${s.grade}`;
-  els.dRain.textContent = `${Math.round(s.rainProb)}%, ${formatRainMm(s.rainAmount)}/h`;
+  els.dRain.textContent = `${Math.round(s.rainProb)}%, ${formatRainMm(s.rainAmount, s.rainProb)}/h`;
   els.dWind.textContent = `${Math.round(s.wind)} km/h, gusts ${Math.round(s.gust)}`;
   els.dDir.textContent = `${compass(s.dir)} (${Math.round(s.dir)}°)`;
 }
@@ -646,9 +646,11 @@ function showStatus(msg, sticky = false) {
 }
 function hideStatus() { els.status.classList.remove('show'); }
 
-function formatRainMm(value) {
+function formatRainMm(value, rainProb = 0) {
   const mm = n(value);
+  const prob = n(rainProb);
   if (mm > 0 && mm < 0.1) return '<0.1 mm';
+  if (mm === 0 && prob > 0) return '<0.1 mm';
   return `${mm.toFixed(1)} mm`;
 }
 function n(x) { return Number.isFinite(Number(x)) ? Number(x) : 0; }
