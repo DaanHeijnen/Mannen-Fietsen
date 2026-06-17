@@ -95,6 +95,8 @@ let forecast = null;
 let particles = [];
 let animationFrame = null;
 let lastWindFrame = 0;
+let mapResizeObserver = null;
+let mapResizeTimer = null;
 
 const els = {
   chipbar: document.querySelector('#chipbar'),
@@ -120,11 +122,24 @@ const els = {
   canvas: null
 };
 
+
+function scheduleMapRefresh(delay = 0) {
+  if (!map) return;
+  clearTimeout(mapResizeTimer);
+  mapResizeTimer = setTimeout(() => {
+    map.invalidateSize(false);
+    resizeCanvas();
+    drawWeatherOverlay();
+  }, delay);
+}
+
 function init() {
   initControls();
   initMap();
   resizeCanvas();
-  window.addEventListener('resize', resizeCanvas);
+  window.addEventListener('resize', () => scheduleMapRefresh(80));
+  window.addEventListener('orientationchange', () => scheduleMapRefresh(350));
+  window.visualViewport?.addEventListener('resize', () => scheduleMapRefresh(120));
   loadForecast(selectedZone);
 }
 
@@ -147,8 +162,8 @@ function initControls() {
 }
 
 function initMap() {
-  // Netlify deploy previews can render Leaflet inside an iframe/toolbar wrapper.
-  // Disabling 3D tile transforms prevents the broken checkerboard tile layout seen in the preview.
+  // Mobile WebViews can render Leaflet's translated tile layers as blocky chunks.
+  // Force the stable non-3D path before Leaflet creates the map.
   if (L?.Browser) L.Browser.any3d = false;
 
   map = L.map('map', {
@@ -163,22 +178,25 @@ function initMap() {
     inertia: false
   }).setView([53.13, 5.65], 8);
 
+  // Use standard OSM raster tiles and darken them with CSS. This proved more stable
+  // than provider-side dark tiles in mobile preview/webview environments.
   const baseTiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    tileSize: 256,
-    zoomOffset: 0,
-    detectRetina: false,
     attribution: '&copy; OpenStreetMap contributors | Weather data by Open-Meteo',
-    crossOrigin: true,
+    crossOrigin: false,
     updateWhenIdle: true,
     updateWhenZooming: false,
-    keepBuffer: 8,
+    keepBuffer: 3,
+    tileSize: 256,
     className: 'base-map-tile'
   }).addTo(map);
 
   baseTiles.on('tileerror', event => {
-    // Hide failed images instead of leaving broken/patchy blocks.
-    event.tile.style.visibility = 'hidden';
+    const img = event.tile;
+    if (!img.dataset.fallback) {
+      img.dataset.fallback = '1';
+      img.src = img.src.replace('https://tile.openstreetmap.org', 'https://a.tile.openstreetmap.org');
+    }
   });
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -194,23 +212,20 @@ function initMap() {
 
   renderMarkers();
 
-  map.on('moveend zoomend resize', () => {
-    resizeCanvas();
-    drawWeatherOverlay();
-  });
+  map.on('moveend zoomend resize', () => scheduleMapRefresh(20));
+
+  const mapEl = map.getContainer();
+  if ('ResizeObserver' in window) {
+    mapResizeObserver = new ResizeObserver(() => scheduleMapRefresh(80));
+    mapResizeObserver.observe(mapEl);
+  }
+  mapEl.addEventListener('transitionend', () => scheduleMapRefresh(80));
 
   // Leaflet sometimes calculates a wrong initial size when the UI is injected dynamically.
   // Force a recalculation after the browser has painted the page.
-  requestAnimationFrame(() => {
-    map.invalidateSize(true);
-    resizeCanvas();
-    drawWeatherOverlay();
-  });
-  setTimeout(() => {
-    map.invalidateSize(true);
-    resizeCanvas();
-    drawWeatherOverlay();
-  }, 250);
+  requestAnimationFrame(() => scheduleMapRefresh(0));
+  setTimeout(() => scheduleMapRefresh(250), 250);
+  setTimeout(() => scheduleMapRefresh(700), 700);
 }
 
 function renderMarkers() {
@@ -390,19 +405,43 @@ function renderWindows() {
   els.windows.innerHTML = forecast.days.map((day, idx) => {
     const s = day.windows[selectedWindow];
     const cl = s.grade === 'good' ? '' : s.grade;
-    return `<div class="window-row ${idx === selectedDayIndex ? 'selected' : ''}" data-day="${idx}">
-      <div><div class="day">${dayLabel(day.date)}</div><div class="date">${dateShort(day.date)}</div></div>
-      <div>
-        <div class="row-title"><span>${adviceText(s)}</span><span>${Math.round(s.confidence)}% confidence</span></div>
-        <div class="bar"><div class="fill ${cl}" style="width:${s.score}%"></div></div>
-      </div>
-      <div class="grade ${cl}">${s.grade.toUpperCase()}</div>
+    const expanded = idx === selectedDayIndex;
+    return `<div class="window-day ${expanded ? 'expanded' : ''}" data-day="${idx}">
+      <button class="window-row ${expanded ? 'selected' : ''}" type="button" aria-expanded="${expanded}">
+        <div><div class="day">${dayLabel(day.date)}</div><div class="date">${dateShort(day.date)}</div></div>
+        <div>
+          <div class="row-title"><span>${adviceText(s)}</span><span>${Math.round(s.confidence)}% confidence</span></div>
+          <div class="bar"><div class="fill ${cl}" style="width:${s.score}%"></div></div>
+        </div>
+        <div class="grade ${cl}">${s.grade.toUpperCase()}</div>
+      </button>
+      ${expanded ? renderHourlyRain(day) : ''}
     </div>`;
   }).join('');
-  els.windows.querySelectorAll('[data-day]').forEach(row => row.addEventListener('click', () => {
-    selectedDayIndex = Number(row.dataset.day);
+  els.windows.querySelectorAll('[data-day] > .window-row').forEach(row => row.addEventListener('click', () => {
+    selectedDayIndex = Number(row.closest('[data-day]').dataset.day);
     renderAll();
   }));
+}
+
+function renderHourlyRain(day) {
+  const rows = day.items.map(hour => {
+    const amount = Math.max(hour.precip, hour.rain);
+    const prob = Math.round(hour.rainProb);
+    const rainWidth = clamp(prob, 2, 100);
+    const amountText = amount >= 0.05 ? `${amount.toFixed(1)} mm` : '0.0 mm';
+    return `<div class="hour-row">
+      <span class="hour-time">${hourLabel(hour.time)}</span>
+      <span class="hour-rainbar"><i style="width:${rainWidth}%"></i></span>
+      <strong>${prob}%</strong>
+      <span>${amountText}</span>
+    </div>`;
+  }).join('');
+
+  return `<div class="hourly-panel">
+    <div class="hourly-head"><span>Hourly rain forecast</span><span>Chance / amount</span></div>
+    <div class="hourly-list">${rows}</div>
+  </div>`;
 }
 
 function renderDetail() {
@@ -617,6 +656,7 @@ function circularMean(degs, weights) {
   degs.forEach((deg, i) => { const r = deg * Math.PI / 180; const w = weights[i] || 1; x += Math.sin(r) * w; y += Math.cos(r) * w; });
   return (Math.atan2(x, y) * 180 / Math.PI + 360) % 360;
 }
+function hourLabel(d) { return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(d); }
 function dayLabel(d) { return new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(d); }
 function dateShort(d) { return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' }).format(d); }
 function dateLong(d) { return new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: '2-digit', month: 'long' }).format(d); }

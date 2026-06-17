@@ -59,7 +59,8 @@ button, input, select { font: inherit; }
 .selectrow label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
 .selectrow select { color: var(--text); background: rgba(255,255,255,.08); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; outline: none; }
 .windows { overflow: auto; max-height: 42vh; }
-.window-row { display: grid; grid-template-columns: 70px 1fr auto; gap: 11px; align-items: center; padding: 12px 14px; border-top: 1px solid rgba(255,255,255,.08); cursor: pointer; transition: .15s; }
+.window-day { border-top: 1px solid rgba(255,255,255,.08); }
+.window-row { width: 100%; display: grid; grid-template-columns: 70px 1fr auto; gap: 11px; align-items: center; padding: 12px 14px; border: 0; color: var(--text); background: transparent; text-align: left; cursor: pointer; transition: .15s; }
 .window-row:hover, .window-row.selected { background: rgba(255,255,255,.08); }
 .day { font-weight: 800; }
 .date { color: var(--muted); font-size: 12px; }
@@ -72,6 +73,16 @@ button, input, select { font: inherit; }
 .grade { min-width: 58px; text-align: center; border-radius: 999px; padding: 7px 9px; font-size: 12px; font-weight: 900; color: #071018; background: var(--good); }
 .grade.maybe { background: var(--maybe); }
 .grade.bad { background: var(--bad); color: #fff; }
+
+.hourly-panel { padding: 0 14px 14px 95px; background: rgba(0,0,0,.12); }
+.hourly-head { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0 8px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.hourly-list { display: grid; gap: 6px; max-height: 235px; overflow: auto; padding-right: 4px; }
+.hour-row { display: grid; grid-template-columns: 48px minmax(70px, 1fr) 42px 52px; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+.hour-row strong { color: var(--text); font-size: 12px; text-align: right; }
+.hour-time { color: var(--text); font-weight: 800; }
+.hour-rainbar { height: 7px; border-radius: 999px; background: rgba(255,255,255,.11); overflow: hidden; }
+.hour-rainbar i { display: block; height: 100%; border-radius: inherit; background: var(--rain); }
+
 .bottompanel { position: absolute; z-index: 860; left: 445px; right: 16px; bottom: 16px; display: grid; grid-template-columns: minmax(260px, 1.2fr) minmax(240px, .8fr); gap: 12px; pointer-events: none; }
 .detail, .legend { pointer-events: auto; padding: 16px; }
 .detail h3, .legend h3 { margin: 0 0 12px; font-size: 16px; }
@@ -91,7 +102,7 @@ button, input, select { font: inherit; }
 @media (max-width: 980px) {
   body { overflow: auto; }
   #app { min-height: 100vh; height: auto; display: flex; flex-direction: column; }
-  .map { position: relative; height: 46vh; min-height: 340px; flex: 0 0 auto; }
+  .map { position: relative; height: 48svh; min-height: 360px; flex: 0 0 auto; contain: layout size paint; transform: translateZ(0); }
   .wind-canvas { height: 100%; }
   .topbar { position: relative; top: auto; left: auto; right: auto; z-index: 5; padding: 12px; flex-wrap: wrap; background: #071018; }
   .brand { flex: 1; }
@@ -101,6 +112,13 @@ button, input, select { font: inherit; }
   .windows { max-height: none; }
   .bottompanel { position: relative; left: auto; right: auto; bottom: auto; grid-template-columns: 1fr; padding: 0 12px 12px; z-index: 4; }
   .detail-grid { grid-template-columns: repeat(2,1fr); }
+  .hourly-panel { padding-left: 14px; }
+  .hour-row { grid-template-columns: 48px minmax(80px, 1fr) 40px 52px; }
+}
+@media (max-width: 520px) {
+  .window-row { grid-template-columns: 50px 1fr; }
+  .window-row .grade { grid-column: 2; justify-self: start; }
+  .hourly-list { max-height: 260px; }
 }
 
 /* Leaflet hardening: keeps the tile grid stable in Netlify deploy previews and darkens OSM tiles. */
@@ -127,4 +145,8 @@ button, input, select { font: inherit; }
 }
 .base-map-tile {
   filter: invert(1) hue-rotate(180deg) brightness(.72) contrast(.96) saturate(.65);
+}
+
+@media (max-width: 980px) {
+  .leaflet-tile-container { will-change: auto !important; }
 }
