@@ -1,4 +1,4 @@
-# CycleCast Noord
+# Mannen Fietsplanner
 
 A Windy-like cycling weather planner for the northern Netherlands. It focuses on the two things that matter most for planning a ride: **rain** and **wind**.
 

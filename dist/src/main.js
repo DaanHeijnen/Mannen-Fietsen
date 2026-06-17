@@ -34,13 +34,12 @@ app.innerHTML = `
   <div class="topbar">
     <div class="brand">
       <div class="logo">🚴</div>
-      <div><h1>CycleCast Noord</h1><p>Wind + rain planner</p></div>
+      <div><h1>Mannen Fietsplanner</h1><p>Wind + rain planner</p></div>
     </div>
     <div class="searchbox">
       <input id="searchInput" placeholder="Search a place, e.g. Groningen, Assen, Leeuwarden" />
       <button id="searchBtn">Search</button>
     </div>
-    <div id="chipbar" class="chipbar"></div>
   </div>
   <div id="status" class="status"></div>
   <div id="predictionNotice" class="prediction-notice" hidden>
@@ -94,7 +93,7 @@ app.innerHTML = `
   </section>
 `;
 
-let map, markerLayer, heatLayer, pinLayer, selectedZone = ZONES[0], selectedWindow = 'day', selectedDayIndex = 0;
+let map, markerLayer, heatLayer, pinLayer, selectedZone = ZONES[0], selectedWindow = 'day', selectedDayIndex = 0, expandedDayIndex = null;
 let forecast = null;
 let particles = [];
 let animationFrame = null;
@@ -106,7 +105,6 @@ let mapResizeTimer = null;
 let activePin = null;
 
 const els = {
-  chipbar: document.querySelector('#chipbar'),
   zoneSelect: document.querySelector('#zoneSelect'),
   windowSelect: document.querySelector('#windowSelect'),
   windows: document.querySelector('#windows'),
@@ -157,17 +155,13 @@ function init() {
 }
 
 function initControls() {
-  els.chipbar.innerHTML = ZONES.map(z => `<button class="chip ${z.id === selectedZone.id ? 'active' : ''}" data-zone="${z.id}">${z.short}</button>`).join('');
   els.zoneSelect.innerHTML = ZONES.map(z => `<option value="${z.id}">${z.name}</option>`).join('');
   els.windowSelect.innerHTML = Object.entries(WINDOWS).map(([id, w]) => `<option value="${id}">${w.label}</option>`).join('');
-  els.chipbar.addEventListener('click', e => {
-    const btn = e.target.closest('[data-zone]');
-    if (btn) setZone(btn.dataset.zone);
-  });
   els.zoneSelect.addEventListener('change', e => setZone(e.target.value));
   els.windowSelect.addEventListener('change', e => {
     selectedWindow = e.target.value;
     selectedDayIndex = 0;
+    expandedDayIndex = null;
     renderAll();
   });
   els.backToCurrentBtn.addEventListener('click', backToCurrentConditions);
@@ -255,8 +249,8 @@ function renderMarkers() {
 async function setZone(id) {
   selectedZone = ZONES.find(z => z.id === id) || ZONES[0];
   selectedDayIndex = 0;
+  expandedDayIndex = null;
   els.zoneSelect.value = selectedZone.id;
-  [...els.chipbar.querySelectorAll('.chip')].forEach(b => b.classList.toggle('active', b.dataset.zone === selectedZone.id));
   map.setView([selectedZone.lat, selectedZone.lon], selectedZone.zoom);
   clearActivePin();
   await loadForecast(selectedZone);
@@ -272,8 +266,9 @@ async function searchPlace() {
     if (!data.results?.length) return showStatus('No location found. Try Groningen, Leeuwarden or Assen.', true);
     const p = data.results[0];
     selectedZone = { id: 'custom', name: `${p.name}${p.admin1 ? ', ' + p.admin1 : ''}`, short: p.name, lat: p.latitude, lon: p.longitude, zoom: 10 };
+    selectedDayIndex = 0;
+    expandedDayIndex = null;
     els.zoneSelect.value = ZONES[0].id;
-    [...els.chipbar.querySelectorAll('.chip')].forEach(b => b.classList.remove('active'));
     map.setView([selectedZone.lat, selectedZone.lon], 10);
     clearActivePin();
     await loadForecast(selectedZone);
@@ -427,7 +422,7 @@ function renderWindows() {
   els.windows.innerHTML = forecast.days.map((day, idx) => {
     const s = day.windows[selectedWindow];
     const cl = s.grade === 'good' ? '' : s.grade;
-    const expanded = idx === selectedDayIndex;
+    const expanded = idx === expandedDayIndex;
     return `<div class="window-day ${expanded ? 'expanded' : ''}" data-day="${idx}">
       <button class="window-row ${expanded ? 'selected' : ''}" type="button" aria-expanded="${expanded}">
         <div><div class="day">${dayLabel(day.date)}</div><div class="date">${dateShort(day.date)}</div></div>
@@ -441,7 +436,9 @@ function renderWindows() {
     </div>`;
   }).join('');
   els.windows.querySelectorAll('[data-day] > .window-row').forEach(row => row.addEventListener('click', () => {
-    selectedDayIndex = Number(row.closest('[data-day]').dataset.day);
+    const idx = Number(row.closest('[data-day]').dataset.day);
+    selectedDayIndex = idx;
+    expandedDayIndex = expandedDayIndex === idx ? null : idx;
     renderAll();
   }));
 }
@@ -488,6 +485,7 @@ function renderPredictionNotice() {
 
 function backToCurrentConditions() {
   selectedDayIndex = 0;
+  expandedDayIndex = null;
   renderAll();
   startWind(false);
 }
