@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "echo \"Static app: no build step required\" && mkdir -p dist && cp -R index.html src public netlify.toml README.md dist/",
+    "build": "echo \"Static app: no build step required\" && mkdir -p dist && cp -R index.html src public netlify netlify.toml README.md dist/",
     "preview": "vite preview --host 0.0.0.0"
   },
   "devDependencies": {
