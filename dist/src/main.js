@@ -455,6 +455,11 @@ function renderWindows() {
         <div>
           <div class="row-title"><span>${adviceText(s)}</span><span>${Math.round(s.confidence)}% confidence</span></div>
           <div class="bar"><div class="fill ${cl}" style="width:${s.score}%"></div></div>
+          <div class="day-weather-meta">
+            <span>${Math.round(s.temp)}°C</span>
+            <span>${Math.round(s.humidity)}% humidity</span>
+            <span>UV ${formatUv(s.uv)}</span>
+          </div>
         </div>
         <div class="grade ${cl}">${s.grade.toUpperCase()}</div>
       </button>
@@ -497,6 +502,9 @@ function renderDetail() {
   els.dRain.textContent = `${Math.round(s.rainProb)}%, ${formatRainMm(s.rainAmount, s.rainProb)}/h`;
   els.dWind.textContent = `${Math.round(s.wind)} km/h, gusts ${Math.round(s.gust)} km/h`;
   els.dDir.textContent = `${compass(s.dir)} (${Math.round(s.dir)}°)`;
+  els.dTemp.textContent = `${Math.round(s.temp)}°C`;
+  els.dHumidity.textContent = `${Math.round(s.humidity)}%`;
+  els.dUv.textContent = formatUv(s.uv);
 }
 
 function renderPredictionNotice() {
@@ -665,13 +673,47 @@ function drawWeatherOverlay() {
   heatLayer.clearLayers();
   const s = forecast.days[selectedDayIndex]?.windows[selectedWindow];
   if (!s) return;
-  const radius = Math.max(9000, 26000 - map.getZoom() * 1700);
+
   const rainAlpha = clamp(s.rainProb / 100, 0.08, 0.62);
   const windAlpha = clamp(s.wind / 55, 0.08, 0.55);
+  const gradeClass = s.grade === 'good' ? 'good' : s.grade;
   const color = s.grade === 'good' ? '#35d07f' : s.grade === 'maybe' ? '#ffd45d' : '#ff6b6b';
-  L.circle([forecast.zone.lat, forecast.zone.lon], { radius: radius * 1.45, color, fillColor: color, fillOpacity: 0.13, weight: 1.5, opacity: 0.75 }).addTo(heatLayer);
-  L.circle([forecast.zone.lat, forecast.zone.lon], { radius: radius, color: '#4bb3fd', fillColor: '#4bb3fd', fillOpacity: rainAlpha * 0.18, weight: 0, opacity: 0 }).addTo(heatLayer);
-  L.circle([forecast.zone.lat, forecast.zone.lon], { radius: radius * 0.6, color: '#b77cff', fillColor: '#b77cff', fillOpacity: windAlpha * 0.18, weight: 0, opacity: 0 }).addTo(heatLayer);
+  const center = [forecast.zone.lat, forecast.zone.lon];
+
+  // Keep the selected-place ring locked to the city with a marker-based overlay.
+  // Mobile pinch zoom can make large SVG meter-radius circles appear to lag behind the map.
+  // A divIcon marker is positioned by Leaflet at the exact lat/lon every frame and stays visually anchored.
+  L.marker(center, {
+    interactive: false,
+    keyboard: false,
+    icon: L.divIcon({
+      className: '',
+      html: `<div class="selected-zone-ring ${gradeClass}"></div>`,
+      iconSize: [92, 92],
+      iconAnchor: [46, 46]
+    })
+  }).addTo(heatLayer);
+
+  // Softer rain/wind pressure halos. These are circle markers in screen pixels instead of huge geographic
+  // circles, which keeps them stable during mobile pinch zoom.
+  L.circleMarker(center, {
+    radius: 56,
+    color: '#4bb3fd',
+    fillColor: '#4bb3fd',
+    fillOpacity: rainAlpha * 0.16,
+    weight: 0,
+    opacity: 0,
+    interactive: false
+  }).addTo(heatLayer);
+  L.circleMarker(center, {
+    radius: 34,
+    color: '#b77cff',
+    fillColor: '#b77cff',
+    fillOpacity: windAlpha * 0.16,
+    weight: 0,
+    opacity: 0,
+    interactive: false
+  }).addTo(heatLayer);
 }
 
 function resizeCanvas() {
@@ -877,7 +919,11 @@ function formatRainMm(value, rainProb = 0) {
 }
 function formatTemp(value) { return `${Math.round(n(value))}°C`; }
 function formatHumidity(value) { return `${Math.round(n(value))}%`; }
-function formatUv(value) { return n(value) < 0.1 ? 'UV 0' : `UV ${n(value).toFixed(1)}`; }
+function formatUv(value) {
+  const uv = n(value);
+  if (uv <= 0) return '0';
+  return uv < 10 ? uv.toFixed(1).replace(/\.0$/, '') : Math.round(uv).toString();
+}
 function n(x) { return Number.isFinite(Number(x)) ? Number(x) : 0; }
 function avg(arr) { return arr.length ? sum(arr) / arr.length : 0; }
 function sum(arr) { return arr.reduce((a, b) => a + n(b), 0); }

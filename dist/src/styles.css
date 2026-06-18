@@ -242,3 +242,24 @@ button, input, select { font: inherit; }
 @media (max-width: 520px) {
   .prediction-notice { align-items: flex-start; flex-direction: column; }
 }
+
+.selected-zone-ring {
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  border: 2px solid rgba(53,208,127,.92);
+  background: rgba(53,208,127,.12);
+  box-shadow: 0 0 0 10px rgba(53,208,127,.08), 0 0 28px rgba(53,208,127,.22);
+  transform: translateZ(0);
+  pointer-events: none;
+}
+.selected-zone-ring.maybe {
+  border-color: rgba(255,212,93,.95);
+  background: rgba(255,212,93,.13);
+  box-shadow: 0 0 0 10px rgba(255,212,93,.08), 0 0 28px rgba(255,212,93,.22);
+}
+.selected-zone-ring.bad {
+  border-color: rgba(255,107,107,.95);
+  background: rgba(255,107,107,.13);
+  box-shadow: 0 0 0 10px rgba(255,107,107,.08), 0 0 28px rgba(255,107,107,.22);
+}
