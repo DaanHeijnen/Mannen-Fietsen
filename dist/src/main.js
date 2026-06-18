@@ -153,6 +153,26 @@ function isTouchMapDevice() {
   return window.matchMedia?.('(pointer: coarse)').matches || window.innerWidth <= 980;
 }
 
+function selectedPlaceZoom(zone = selectedZone) {
+  const baseZoom = Number.isFinite(Number(zone?.zoom)) ? Number(zone.zoom) : 10;
+  // Mobile zoom already feels right, so only increase the desktop zoom a little.
+  return isTouchMapDevice() ? baseZoom : clamp(baseZoom + 1, 7, 13);
+}
+
+function centerMapOnSelectedPlace(delay = 0) {
+  if (!map || !selectedZone) return;
+  const lat = Number(selectedZone.lat);
+  const lon = Number(selectedZone.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+  setTimeout(() => {
+    if (!map) return;
+    map.invalidateSize(false);
+    map.setView([lat, lon], selectedPlaceZoom(selectedZone), { animate: false });
+    scheduleMapRefresh(60);
+  }, delay);
+}
+
 function init() {
   initControls();
   initMap();
@@ -164,7 +184,9 @@ function init() {
     if (!document.hidden && forecast) startWind(false);
   });
   loadForecast(selectedZone);
+  centerMapOnSelectedPlace(450);
 }
+
 
 function initControls() {
   els.zoneSelect.innerHTML = ZONES.map(z => `<option value="${z.id}">${z.name}</option>`).join('');
@@ -273,9 +295,10 @@ async function setZone(id) {
   selectedDayIndex = 0;
   expandedDayIndex = null;
   els.zoneSelect.value = selectedZone.id;
-  map.setView([selectedZone.lat, selectedZone.lon], selectedZone.zoom);
+  centerMapOnSelectedPlace();
   clearActivePin();
   await loadForecast(selectedZone);
+  centerMapOnSelectedPlace(120);
 }
 
 async function searchPlace() {
@@ -291,9 +314,10 @@ async function searchPlace() {
     selectedDayIndex = 0;
     expandedDayIndex = null;
     els.zoneSelect.value = ZONES[0].id;
-    map.setView([selectedZone.lat, selectedZone.lon], 10);
+    centerMapOnSelectedPlace();
     clearActivePin();
     await loadForecast(selectedZone);
+    centerMapOnSelectedPlace(120);
   } catch (err) {
     console.error(err);
     showStatus('Could not search right now. Check your internet connection.', true);
