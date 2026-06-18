@@ -70,13 +70,15 @@ button, input, select { font: inherit; }
 .fill.bad { background: var(--bad); }
 .row-title { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
 .row-title span:last-child { color: var(--muted); }
+.day-weather-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.day-weather-meta span { color: var(--text); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.08); border-radius: 999px; padding: 4px 7px; font-size: 11px; font-weight: 750; }
 .grade { min-width: 58px; text-align: center; border-radius: 999px; padding: 7px 9px; font-size: 12px; font-weight: 900; color: #071018; background: var(--good); }
 .grade.maybe { background: var(--maybe); }
 .grade.bad { background: var(--bad); color: #fff; }
 .bottompanel { position: absolute; z-index: 860; left: 445px; right: 16px; bottom: 16px; display: grid; grid-template-columns: minmax(260px, 1.2fr) minmax(240px, .8fr); gap: 12px; pointer-events: none; }
 .detail, .legend { pointer-events: auto; padding: 16px; }
 .detail h3, .legend h3 { margin: 0 0 12px; font-size: 16px; }
-.detail-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.detail-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; }
 .pill { padding: 10px; border-radius: 14px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.08); }
 .pill span { color: var(--muted); display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
 .pill strong { margin-top: 5px; display: block; font-size: 15px; }
@@ -113,6 +115,7 @@ button, input, select { font: inherit; }
   .plannerbar .searchbox { max-width: 340px; }
 }
 @media (max-width: 1280px) and (min-width: 981px) {
+  .detail-grid { grid-template-columns: repeat(4,1fr); }
   .plannerbar { top: 84px; max-width: min(760px, calc(100vw - 32px)); }
   .sidepanel { top: 154px; }
   .status { top: 154px; }

@@ -35,6 +35,7 @@ The `netlify.toml` file already contains these settings.
 - Full-screen Windy-like map UI
 - Northern Netherlands map scope
 - Animated wind particles
+- Daily humidity, temperature and UV indicators
 - Rain and wind overlays
 - City/zone picker
 - Best cycling windows for the next 10 days

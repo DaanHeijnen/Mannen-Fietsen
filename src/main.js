@@ -17,6 +17,8 @@ const WINDOWS = {
 
 const API_VARIABLES = [
   'temperature_2m',
+  'relative_humidity_2m',
+  'uv_index',
   'precipitation_probability',
   'precipitation',
   'rain',
@@ -77,6 +79,9 @@ app.innerHTML = `
         <div class="pill"><span>Rain</span><strong id="dRain">--</strong></div>
         <div class="pill"><span>Wind</span><strong id="dWind">--</strong></div>
         <div class="pill"><span>Direction</span><strong id="dDir">--</strong></div>
+        <div class="pill"><span>Temp</span><strong id="dTemp">--</strong></div>
+        <div class="pill"><span>Humidity</span><strong id="dHumidity">--</strong></div>
+        <div class="pill"><span>UV</span><strong id="dUv">--</strong></div>
       </div>
     </article>
     <article class="card legend">
@@ -115,6 +120,9 @@ const els = {
   dRain: document.querySelector('#dRain'),
   dWind: document.querySelector('#dWind'),
   dDir: document.querySelector('#dDir'),
+  dTemp: document.querySelector('#dTemp'),
+  dHumidity: document.querySelector('#dHumidity'),
+  dUv: document.querySelector('#dUv'),
   detailTitle: document.querySelector('#detailTitle'),
   searchInput: document.querySelector('#searchInput'),
   searchBtn: document.querySelector('#searchBtn'),
@@ -283,6 +291,8 @@ function transformForecast(data, zone) {
     time: new Date(time),
     iso: time,
     temp: n(h.temperature_2m?.[i]),
+    humidity: n(h.relative_humidity_2m?.[i]),
+    uv: n(h.uv_index?.[i]),
     rainProb: n(h.precipitation_probability?.[i]),
     precip: n(h.precipitation?.[i]),
     rain: n(h.rain?.[i]) + n(h.showers?.[i]),
@@ -323,11 +333,13 @@ function summarizeWindow(items, dayIndex, id) {
   const gust = Math.max(...items.map(i => i.gust));
   const dir = circularMean(items.map(i => i.dir), items.map(i => Math.max(1, i.wind)));
   const temp = avg(items.map(i => i.temp));
+  const humidity = avg(items.map(i => i.humidity));
+  const uv = Math.max(...items.map(i => i.uv));
   const clouds = avg(items.map(i => i.clouds));
   const score = cyclingScore({ rainProb, rainAmount, wind, gust, dayIndex });
   const confidence = confidenceScore({ rainProb, rainAmount, wind, gust, dayIndex, items });
   const grade = score >= 74 ? 'good' : score >= 48 ? 'maybe' : 'bad';
-  return { id, rainProb, rainAmount, wind, gust, dir, temp, clouds, score, confidence, grade };
+  return { id, rainProb, rainAmount, wind, gust, dir, temp, humidity, uv, clouds, score, confidence, grade };
 }
 
 function cyclingScore({ rainProb, rainAmount, wind, gust, dayIndex }) {
@@ -380,6 +392,11 @@ function renderWindows() {
       <div>
         <div class="row-title"><span>${adviceText(s)}</span><span>${Math.round(s.confidence)}% confidence</span></div>
         <div class="bar"><div class="fill ${cl}" style="width:${s.score}%"></div></div>
+        <div class="day-weather-meta">
+          <span>${formatTemp(s.temp)}</span>
+          <span>${formatHumidity(s.humidity)}</span>
+          <span>${formatUv(s.uv)}</span>
+        </div>
       </div>
       <div class="grade ${cl}">${s.grade.toUpperCase()}</div>
     </div>`;
@@ -396,7 +413,10 @@ function renderDetail() {
   els.detailTitle.textContent = `${dateLong(day.date)} · ${WINDOWS[selectedWindow].label} · ${forecast.zone.name}`;
   els.dScore.textContent = `${s.score}/100 ${s.grade}`;
   els.dRain.textContent = `${Math.round(s.rainProb)}%, ${s.rainAmount.toFixed(1)} mm/h`;
-  els.dWind.textContent = `${Math.round(s.wind)} km/h, gusts ${Math.round(s.gust)}`;
+  els.dWind.textContent = `${Math.round(s.wind)} km/h, gusts ${Math.round(s.gust)} km/h`;
+  els.dTemp.textContent = formatTemp(s.temp);
+  els.dHumidity.textContent = formatHumidity(s.humidity);
+  els.dUv.textContent = formatUv(s.uv);
   els.dDir.textContent = `${compass(s.dir)} (${Math.round(s.dir)}°)`;
 }
 
@@ -540,6 +560,9 @@ function showStatus(msg, sticky = false) {
 }
 function hideStatus() { els.status.classList.remove('show'); }
 
+function formatTemp(value) { return `${Math.round(n(value))}°C`; }
+function formatHumidity(value) { return `${Math.round(n(value))}%`; }
+function formatUv(value) { return n(value) < 0.1 ? 'UV 0' : `UV ${n(value).toFixed(1)}`; }
 function n(x) { return Number.isFinite(Number(x)) ? Number(x) : 0; }
 function avg(arr) { return arr.length ? sum(arr) / arr.length : 0; }
 function sum(arr) { return arr.reduce((a, b) => a + n(b), 0); }
