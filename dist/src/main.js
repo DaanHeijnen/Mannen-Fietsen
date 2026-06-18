@@ -70,6 +70,34 @@ app.innerHTML = `
       <div class="selectrow"><label>Area</label><select id="zoneSelect"></select></div>
       <div class="selectrow"><label>Ride window</label><select id="windowSelect"></select></div>
     </article>
+    <article class="card routes-card">
+      <div class="routes-head">
+        <div>
+          <h3>GPX routes</h3>
+          <p id="routeAuthState">Log in to upload your own routes.</p>
+        </div>
+        <div class="route-auth-actions">
+          <button id="routeLoginBtn" type="button">Log in</button>
+          <button id="routeLogoutBtn" type="button" hidden>Log out</button>
+        </div>
+      </div>
+      <form id="routeUploadForm" class="route-upload">
+        <div class="route-upload-grid">
+          <input id="routeTitleInput" name="title" placeholder="Route name" maxlength="80" />
+          <input id="routeCreatorInput" name="creator" placeholder="Made by" maxlength="60" />
+        </div>
+        <input id="routeDescriptionInput" name="description" placeholder="Short description, optional" maxlength="160" />
+        <div class="route-file-row">
+          <input id="routeFileInput" name="file" type="file" accept=".gpx,application/gpx+xml,text/xml,application/xml" />
+          <button id="routeUploadBtn" type="submit">Upload GPX</button>
+        </div>
+      </form>
+      <div class="route-tabs">
+        <button type="button" class="active" data-route-filter="all">All routes</button>
+        <button type="button" data-route-filter="mine">My routes</button>
+      </div>
+      <div id="routeList" class="route-list">Loading routes...</div>
+    </article>
     <article id="windows" class="card windows"></article>
   </section>
   <section class="bottompanel">
@@ -98,7 +126,7 @@ app.innerHTML = `
   </section>
 `;
 
-let map, markerLayer, heatLayer, pinLayer, selectedZone = ZONES[0], selectedWindow = 'day', selectedDayIndex = 0, expandedDayIndex = null;
+let map, markerLayer, heatLayer, pinLayer, routeLayer, selectedZone = ZONES[0], selectedWindow = 'day', selectedDayIndex = 0, expandedDayIndex = null;
 let forecast = null;
 let particles = [];
 let animationFrame = null;
@@ -108,6 +136,10 @@ let windWatchdogTimer = null;
 let mapResizeObserver = null;
 let mapResizeTimer = null;
 let activePin = null;
+let authUser = null;
+let routes = [];
+let routeFilter = 'all';
+let activeRoute = null;
 
 const els = {
   zoneSelect: document.querySelector('#zoneSelect'),
@@ -135,6 +167,17 @@ const els = {
   detailTitle: document.querySelector('#detailTitle'),
   searchInput: document.querySelector('#searchInput'),
   searchBtn: document.querySelector('#searchBtn'),
+  routeAuthState: document.querySelector('#routeAuthState'),
+  routeLoginBtn: document.querySelector('#routeLoginBtn'),
+  routeLogoutBtn: document.querySelector('#routeLogoutBtn'),
+  routeUploadForm: document.querySelector('#routeUploadForm'),
+  routeTitleInput: document.querySelector('#routeTitleInput'),
+  routeCreatorInput: document.querySelector('#routeCreatorInput'),
+  routeDescriptionInput: document.querySelector('#routeDescriptionInput'),
+  routeFileInput: document.querySelector('#routeFileInput'),
+  routeUploadBtn: document.querySelector('#routeUploadBtn'),
+  routeList: document.querySelector('#routeList'),
+  routeTabs: document.querySelector('.route-tabs'),
   canvas: null
 };
 
@@ -175,6 +218,8 @@ function centerMapOnSelectedPlace(delay = 0) {
 
 function init() {
   initControls();
+  initRouteControls();
+  initAuth();
   initMap();
   resizeCanvas();
   window.addEventListener('resize', () => scheduleMapRefresh(80));
@@ -184,6 +229,7 @@ function init() {
     if (!document.hidden && forecast) startWind(false);
   });
   loadForecast(selectedZone);
+  loadRoutes();
   centerMapOnSelectedPlace(450);
 }
 
@@ -201,6 +247,54 @@ function initControls() {
   els.backToCurrentBtn.addEventListener('click', backToCurrentConditions);
   els.searchBtn.addEventListener('click', searchPlace);
   els.searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') searchPlace(); });
+}
+
+function initRouteControls() {
+  els.routeLoginBtn.addEventListener('click', () => window.netlifyIdentity?.open?.());
+  els.routeLogoutBtn.addEventListener('click', () => window.netlifyIdentity?.logout?.());
+  els.routeUploadForm.addEventListener('submit', handleRouteUpload);
+  els.routeTabs.addEventListener('click', event => {
+    const btn = event.target.closest('[data-route-filter]');
+    if (!btn) return;
+    routeFilter = btn.dataset.routeFilter;
+    [...els.routeTabs.querySelectorAll('[data-route-filter]')].forEach(tab => tab.classList.toggle('active', tab === btn));
+    renderRoutes();
+  });
+}
+
+function initAuth() {
+  if (!window.netlifyIdentity) {
+    authUser = null;
+    renderAuthState();
+    return;
+  }
+  window.netlifyIdentity.on('init', user => {
+    authUser = user;
+    renderAuthState();
+    renderRoutes();
+  });
+  window.netlifyIdentity.on('login', user => {
+    authUser = user;
+    window.netlifyIdentity.close();
+    renderAuthState();
+    loadRoutes();
+  });
+  window.netlifyIdentity.on('logout', () => {
+    authUser = null;
+    renderAuthState();
+    renderRoutes();
+  });
+  window.netlifyIdentity.init();
+}
+
+function renderAuthState() {
+  const hasIdentity = Boolean(window.netlifyIdentity);
+  const email = authUser?.email;
+  els.routeAuthState.textContent = email ? `Logged in as ${email}` : hasIdentity ? 'Log in to upload your own routes.' : 'Netlify Identity is not loaded yet.';
+  els.routeLoginBtn.hidden = Boolean(email);
+  els.routeLogoutBtn.hidden = !email;
+  els.routeUploadBtn.disabled = !email;
+  els.routeUploadForm.classList.toggle('disabled', !email);
 }
 
 function initMap() {
@@ -246,9 +340,13 @@ function initMap() {
   });
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
+  map.createPane('routePane');
+  map.getPane('routePane').style.zIndex = 640;
+  map.getPane('routePane').style.pointerEvents = 'none';
   markerLayer = L.layerGroup().addTo(map);
   heatLayer = L.layerGroup().addTo(map);
   pinLayer = L.layerGroup().addTo(map);
+  routeLayer = L.layerGroup().addTo(map);
 
   // Do not attach custom touchmove/gesture handlers here.
   // CSS touch-action keeps the browser from page-zooming, while Leaflet receives the full gesture
@@ -450,7 +548,9 @@ function renderAll() {
   renderPredictionNotice();
   drawWeatherOverlay();
   refreshActivePin();
+  renderRoutes();
 }
+
 
 function renderHero() {
   const current = getCurrentConditionsSummary();
@@ -658,6 +758,207 @@ function pinIcon(text) {
     iconSize: [74, 38],
     iconAnchor: [37, 38]
   });
+}
+
+async function loadRoutes() {
+  try {
+    const data = await fetchJson('/.netlify/functions/routes-list');
+    routes = Array.isArray(data.routes) ? data.routes : [];
+    renderRoutes();
+  } catch (err) {
+    console.error(err);
+    els.routeList.textContent = 'Could not load routes yet. Deploy with Netlify Functions to enable this.';
+  }
+}
+
+async function handleRouteUpload(event) {
+  event.preventDefault();
+  const file = els.routeFileInput.files?.[0];
+  if (!authUser) return showStatus('Log in before uploading a GPX route.', true);
+  if (!file) return showStatus('Choose a .gpx file first.', true);
+  if (!file.name.toLowerCase().endsWith('.gpx')) return showStatus('Only .gpx files are supported.', true);
+  if (file.size > 4 * 1024 * 1024) return showStatus('This GPX file is too large. Keep it below 4 MB.', true);
+
+  showStatus('Reading GPX route...');
+  try {
+    const gpx = await file.text();
+    const parsed = parseGpx(gpx);
+    if (!parsed.points.length) return showStatus('No route points found in this GPX file.', true);
+    const title = els.routeTitleInput.value.trim() || parsed.name || file.name.replace(/\.gpx$/i, '');
+    const creatorName = els.routeCreatorInput.value.trim() || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Unknown rider';
+    const description = els.routeDescriptionInput.value.trim();
+    const token = await getIdentityToken();
+
+    const res = await fetch('/.netlify/functions/routes-upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        title,
+        creatorName,
+        description,
+        gpx,
+        distanceKm: parsed.distanceKm,
+        startLat: parsed.start?.[0],
+        startLon: parsed.start?.[1],
+        endLat: parsed.end?.[0],
+        endLon: parsed.end?.[1],
+        bounds: parsed.bounds,
+        pointCount: parsed.points.length
+      })
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data?.error || 'Upload failed');
+    els.routeUploadForm.reset();
+    showStatus('Route uploaded.');
+    setTimeout(hideStatus, 1200);
+    await loadRoutes();
+    if (data.route?.id) await showRoute(data.route.id);
+  } catch (err) {
+    console.error(err);
+    showStatus(err.message || 'Could not upload this route.', true);
+  }
+}
+
+async function showRoute(id) {
+  const route = routes.find(r => r.id === id);
+  showStatus(route ? `Loading ${route.title}...` : 'Loading route...');
+  try {
+    const data = await fetchJson(`/.netlify/functions/routes-get?id=${encodeURIComponent(id)}`);
+    const parsed = parseGpx(data.gpx);
+    if (!parsed.points.length) throw new Error('This route has no points.');
+    activeRoute = { ...(route || data.route), points: parsed.points };
+    drawRoute(parsed.points);
+    renderRoutes();
+    showStatus(route ? `${route.title} shown on the map.` : 'Route shown on the map.');
+    setTimeout(hideStatus, 1200);
+  } catch (err) {
+    console.error(err);
+    showStatus(err.message || 'Could not load this route.', true);
+  }
+}
+
+function drawRoute(points) {
+  if (!routeLayer || !map) return;
+  routeLayer.clearLayers();
+  const line = L.polyline(points, {
+    color: '#ffb21a',
+    weight: 5,
+    opacity: 0.92,
+    lineJoin: 'round',
+    lineCap: 'round',
+    interactive: false,
+    pane: 'routePane'
+  }).addTo(routeLayer);
+  const outline = L.polyline(points, {
+    color: '#071018',
+    weight: 8,
+    opacity: 0.55,
+    lineJoin: 'round',
+    lineCap: 'round',
+    interactive: false,
+    pane: 'routePane'
+  }).addTo(routeLayer);
+  outline.bringToBack();
+  line.bringToFront();
+  map.fitBounds(line.getBounds(), { padding: [36, 36], animate: false, maxZoom: isTouchMapDevice() ? 12 : 13 });
+  scheduleMapRefresh(120);
+  startWind(false);
+}
+
+function clearRoute() {
+  activeRoute = null;
+  routeLayer?.clearLayers();
+  renderRoutes();
+}
+
+function renderRoutes() {
+  if (!els.routeList) return;
+  const filtered = routeFilter === 'mine'
+    ? routes.filter(route => authUser && route.ownerId === (authUser.id || authUser.sub))
+    : routes;
+  if (!filtered.length) {
+    els.routeList.innerHTML = `<div class="route-empty">${routeFilter === 'mine' ? 'You have not uploaded any routes yet.' : 'No GPX routes uploaded yet.'}</div>`;
+    return;
+  }
+  els.routeList.innerHTML = filtered.map(route => {
+    const selected = activeRoute?.id === route.id;
+    const weather = routeWeatherSummary(route);
+    return `<button type="button" class="route-item ${selected ? 'selected' : ''}" data-route-id="${escapeHtml(route.id)}">
+      <div class="route-title-row"><strong>${escapeHtml(route.title || 'Untitled route')}</strong><span>${formatKm(route.distanceKm)}</span></div>
+      <div class="route-meta">Made by ${escapeHtml(route.creatorName || 'Unknown')} · ${formatRouteDate(route.createdAt)}</div>
+      ${route.description ? `<div class="route-description">${escapeHtml(route.description)}</div>` : ''}
+      <div class="route-weather">${weather}</div>
+    </button>`;
+  }).join('');
+  els.routeList.querySelectorAll('[data-route-id]').forEach(btn => btn.addEventListener('click', () => showRoute(btn.dataset.routeId)));
+}
+
+function routeWeatherSummary(route) {
+  const distance = Number(route?.distanceFromSelectedKm);
+  const selected = getSelectedForecastSummary();
+  if (!selected?.summary) return 'Weather loading...';
+  const s = selected.summary;
+  return `${Math.round(s.wind)} km/h wind · ${Math.round(s.rainProb)}% rain · ${Math.round(s.temp)}°C`;
+}
+
+function parseGpx(gpxText) {
+  const xml = new DOMParser().parseFromString(gpxText, 'application/xml');
+  const parserError = xml.querySelector('parsererror');
+  if (parserError) throw new Error('This GPX file is not valid XML.');
+  const name = xml.querySelector('trk > name, rte > name, metadata > name')?.textContent?.trim() || '';
+  const nodes = [...xml.querySelectorAll('trkpt, rtept')];
+  const points = nodes.map(node => [Number(node.getAttribute('lat')), Number(node.getAttribute('lon'))])
+    .filter(([lat, lon]) => Number.isFinite(lat) && Number.isFinite(lon));
+  let distanceKm = 0;
+  for (let i = 1; i < points.length; i += 1) distanceKm += distanceBetweenKm(points[i - 1], points[i]);
+  const bounds = points.length ? makeBounds(points) : null;
+  return { name, points, distanceKm, start: points[0] || null, end: points[points.length - 1] || null, bounds };
+}
+
+function makeBounds(points) {
+  const lats = points.map(p => p[0]);
+  const lons = points.map(p => p[1]);
+  return [[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]];
+}
+
+function distanceBetweenKm(a, b) {
+  const toRad = deg => deg * Math.PI / 180;
+  const r = 6371;
+  const dLat = toRad(b[0] - a[0]);
+  const dLon = toRad(b[1] - a[1]);
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * r * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+async function getIdentityToken() {
+  const user = window.netlifyIdentity?.currentUser?.();
+  if (!user) return '';
+  return user.jwt();
+}
+
+async function safeJson(res) {
+  try { return await res.json(); } catch { return null; }
+}
+
+function formatKm(value) {
+  const km = n(value);
+  if (km <= 0) return '-- km';
+  return `${km.toFixed(km < 10 ? 1 : 0)} km`;
+}
+
+function formatRouteDate(value) {
+  const d = value ? new Date(value) : null;
+  if (!d || Number.isNaN(d.getTime())) return 'just now';
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' }).format(d);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
 }
 
 function renderError() {

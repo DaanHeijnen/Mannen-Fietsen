@@ -263,3 +263,44 @@ button, input, select { font: inherit; }
   background: rgba(255,107,107,.13);
   box-shadow: 0 0 0 10px rgba(255,107,107,.08), 0 0 28px rgba(255,107,107,.22);
 }
+
+/* GPX route browser */
+.routes-card { padding: 14px; }
+.routes-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.routes-head h3 { margin: 0; font-size: 16px; }
+.routes-head p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
+.route-auth-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.route-auth-actions button,
+.route-upload button,
+.route-tabs button { border: 0; border-radius: 999px; padding: 8px 10px; font-size: 12px; font-weight: 850; cursor: pointer; color: #071018; background: var(--accent); }
+.route-auth-actions button[hidden] { display: none; }
+.route-upload { display: grid; gap: 8px; margin-top: 12px; }
+.route-upload.disabled { opacity: .58; }
+.route-upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.route-upload input { width: 100%; min-width: 0; color: var(--text); background: rgba(255,255,255,.08); border: 1px solid var(--line); border-radius: 12px; padding: 9px 10px; outline: none; }
+.route-file-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.route-file-row input[type="file"] { font-size: 11px; padding: 8px; }
+.route-upload button:disabled { cursor: not-allowed; filter: grayscale(.8); opacity: .7; }
+.route-tabs { display: flex; gap: 8px; margin-top: 12px; }
+.route-tabs button { color: var(--text); background: rgba(255,255,255,.08); border: 1px solid var(--line); }
+.route-tabs button.active { color: #071018; background: var(--accent); border-color: rgba(255,178,26,.8); }
+.route-list { display: grid; gap: 8px; margin-top: 10px; max-height: 240px; overflow: auto; padding-right: 2px; }
+.route-item { width: 100%; text-align: left; color: var(--text); background: rgba(255,255,255,.065); border: 1px solid rgba(255,255,255,.09); border-radius: 14px; padding: 10px; cursor: pointer; transition: .15s; }
+.route-item:hover,
+.route-item.selected { background: rgba(255,178,26,.13); border-color: rgba(255,178,26,.55); }
+.route-title-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.route-title-row strong { font-size: 13px; }
+.route-title-row span { color: var(--accent); font-size: 12px; font-weight: 900; white-space: nowrap; }
+.route-meta,
+.route-description,
+.route-weather,
+.route-empty { color: var(--muted); font-size: 12px; line-height: 1.35; margin-top: 5px; }
+.route-weather { color: #d7ecff; }
+@media (max-width: 980px) {
+  .route-list { max-height: none; }
+}
+@media (max-width: 520px) {
+  .route-upload-grid,
+  .route-file-row { grid-template-columns: 1fr; }
+  .route-auth-actions { flex-direction: column; }
+}
