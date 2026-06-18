@@ -15,6 +15,8 @@ const WINDOWS = {
   evening: { label: 'Evening', start: 18, end: 22 }
 };
 
+const SIGNUP_SECRET = 'Mannenavond';
+
 const API_VARIABLES = [
   'temperature_2m',
   'relative_humidity_2m',
@@ -38,9 +40,15 @@ app.innerHTML = `
       <div class="logo">🚴</div>
       <div><h1>Mannen Fietsplanner</h1><p>Wind + rain planner</p></div>
     </div>
-    <div class="searchbox">
-      <input id="searchInput" placeholder="Search a place, e.g. Groningen, Assen, Leeuwarden" />
-      <button id="searchBtn">Search</button>
+    <div class="search-auth-row">
+      <div class="searchbox">
+        <input id="searchInput" placeholder="Search a place, e.g. Groningen, Assen, Leeuwarden" />
+        <button id="searchBtn">Search</button>
+      </div>
+      <div class="top-auth-actions">
+        <button id="topAuthBtn" type="button">Log in</button>
+        <button id="topRoutesBtn" type="button">Routes</button>
+      </div>
     </div>
   </div>
   <div id="status" class="status"></div>
@@ -70,16 +78,18 @@ app.innerHTML = `
       <div class="selectrow"><label>Area</label><select id="zoneSelect"></select></div>
       <div class="selectrow"><label>Ride window</label><select id="windowSelect"></select></div>
     </article>
-    <article class="card routes-card">
+    <article id="routesCard" class="card routes-card">
       <div class="routes-head">
         <div>
           <h3>GPX routes</h3>
           <p id="routeAuthState">Log in to upload your own routes.</p>
         </div>
-        <div class="route-auth-actions">
-          <button id="routeLoginBtn" type="button">Log in</button>
-          <button id="routeLogoutBtn" type="button" hidden>Log out</button>
-        </div>
+        <button id="routePanelCloseBtn" class="route-panel-close" type="button" aria-label="Close routes">×</button>
+      </div>
+      <div id="mobileRouteMenu" class="mobile-route-menu" hidden>
+        <button type="button" data-mobile-route-action="all">All routes</button>
+        <button type="button" data-mobile-route-action="mine">My routes</button>
+        <button type="button" data-mobile-route-action="upload">Upload GPX</button>
       </div>
       <form id="routeUploadForm" class="route-upload">
         <div class="route-upload-grid">
@@ -124,6 +134,25 @@ app.innerHTML = `
       </div>
     </article>
   </section>
+  <div id="authModal" class="auth-modal" hidden>
+    <div class="auth-modal-backdrop" data-auth-close="true"></div>
+    <section class="auth-dialog card">
+      <button id="authModalCloseBtn" class="auth-close" type="button" aria-label="Close login">×</button>
+      <h3>Account</h3>
+      <p class="auth-help">Log in, or create an account with the secret key.</p>
+      <div class="auth-mode-row">
+        <button id="authModeLoginBtn" type="button" class="active">Log in</button>
+        <button id="authModeSignupBtn" type="button">Create account</button>
+      </div>
+      <form id="customAuthForm" class="custom-auth-form">
+        <input id="authEmailInput" type="email" autocomplete="email" placeholder="Email" required />
+        <input id="authPasswordInput" type="password" autocomplete="current-password" placeholder="Password" required />
+        <input id="authSecretInput" type="password" autocomplete="off" placeholder="Secret key" hidden />
+        <button id="authSubmitBtn" type="submit">Log in</button>
+      </form>
+      <div id="authModalMessage" class="auth-message"></div>
+    </section>
+  </div>
 `;
 
 let map, markerLayer, heatLayer, pinLayer, routeLayer, selectedZone = ZONES[0], selectedWindow = 'day', selectedDayIndex = 0, expandedDayIndex = null;
@@ -140,6 +169,8 @@ let authUser = null;
 let routes = [];
 let routeFilter = 'all';
 let activeRoute = null;
+let routePanelOpen = false;
+let authModalMode = 'login';
 
 const els = {
   zoneSelect: document.querySelector('#zoneSelect'),
@@ -167,9 +198,12 @@ const els = {
   detailTitle: document.querySelector('#detailTitle'),
   searchInput: document.querySelector('#searchInput'),
   searchBtn: document.querySelector('#searchBtn'),
+  topAuthBtn: document.querySelector('#topAuthBtn'),
+  topRoutesBtn: document.querySelector('#topRoutesBtn'),
+  routesCard: document.querySelector('#routesCard'),
+  routePanelCloseBtn: document.querySelector('#routePanelCloseBtn'),
+  mobileRouteMenu: document.querySelector('#mobileRouteMenu'),
   routeAuthState: document.querySelector('#routeAuthState'),
-  routeLoginBtn: document.querySelector('#routeLoginBtn'),
-  routeLogoutBtn: document.querySelector('#routeLogoutBtn'),
   routeUploadForm: document.querySelector('#routeUploadForm'),
   routeTitleInput: document.querySelector('#routeTitleInput'),
   routeCreatorInput: document.querySelector('#routeCreatorInput'),
@@ -178,6 +212,16 @@ const els = {
   routeUploadBtn: document.querySelector('#routeUploadBtn'),
   routeList: document.querySelector('#routeList'),
   routeTabs: document.querySelector('.route-tabs'),
+  authModal: document.querySelector('#authModal'),
+  authModalCloseBtn: document.querySelector('#authModalCloseBtn'),
+  authModeLoginBtn: document.querySelector('#authModeLoginBtn'),
+  authModeSignupBtn: document.querySelector('#authModeSignupBtn'),
+  customAuthForm: document.querySelector('#customAuthForm'),
+  authEmailInput: document.querySelector('#authEmailInput'),
+  authPasswordInput: document.querySelector('#authPasswordInput'),
+  authSecretInput: document.querySelector('#authSecretInput'),
+  authSubmitBtn: document.querySelector('#authSubmitBtn'),
+  authModalMessage: document.querySelector('#authModalMessage'),
   canvas: null
 };
 
@@ -250,16 +294,33 @@ function initControls() {
 }
 
 function initRouteControls() {
-  els.routeLoginBtn.addEventListener('click', () => window.netlifyIdentity?.open?.());
-  els.routeLogoutBtn.addEventListener('click', () => window.netlifyIdentity?.logout?.());
+  els.topAuthBtn.addEventListener('click', handleTopAuthClick);
+  els.topRoutesBtn.addEventListener('click', () => setRoutePanelOpen(!routePanelOpen));
+  els.routePanelCloseBtn.addEventListener('click', () => setRoutePanelOpen(false));
   els.routeUploadForm.addEventListener('submit', handleRouteUpload);
   els.routeTabs.addEventListener('click', event => {
     const btn = event.target.closest('[data-route-filter]');
     if (!btn) return;
-    routeFilter = btn.dataset.routeFilter;
-    [...els.routeTabs.querySelectorAll('[data-route-filter]')].forEach(tab => tab.classList.toggle('active', tab === btn));
-    renderRoutes();
+    setRouteFilter(btn.dataset.routeFilter);
   });
+  els.mobileRouteMenu.addEventListener('click', event => {
+    const btn = event.target.closest('[data-mobile-route-action]');
+    if (!btn) return;
+    const action = btn.dataset.mobileRouteAction;
+    setRoutePanelOpen(true);
+    if (action === 'all' || action === 'mine') setRouteFilter(action);
+    if (action === 'upload') {
+      if (!canUploadRoutes()) return showStatus('Create an account with the secret key before uploading GPX routes.', true);
+      setTimeout(() => els.routeTitleInput?.focus(), 120);
+    }
+  });
+  els.authModeLoginBtn.addEventListener('click', () => setAuthModalMode('login'));
+  els.authModeSignupBtn.addEventListener('click', () => setAuthModalMode('signup'));
+  els.authModalCloseBtn.addEventListener('click', closeAuthModal);
+  els.authModal.addEventListener('click', event => {
+    if (event.target?.dataset?.authClose) closeAuthModal();
+  });
+  els.customAuthForm.addEventListener('submit', handleCustomAuthSubmit);
 }
 
 function initAuth() {
@@ -290,11 +351,105 @@ function initAuth() {
 function renderAuthState() {
   const hasIdentity = Boolean(window.netlifyIdentity);
   const email = authUser?.email;
-  els.routeAuthState.textContent = email ? `Logged in as ${email}` : hasIdentity ? 'Log in to upload your own routes.' : 'Netlify Identity is not loaded yet.';
-  els.routeLoginBtn.hidden = Boolean(email);
-  els.routeLogoutBtn.hidden = !email;
-  els.routeUploadBtn.disabled = !email;
-  els.routeUploadForm.classList.toggle('disabled', !email);
+  const verified = canUploadRoutes();
+  els.routeAuthState.textContent = email
+    ? verified ? `Logged in as ${email}` : `Logged in as ${email}. Uploads require the secret key account.`
+    : hasIdentity ? 'Log in to upload your own routes.' : 'Netlify Identity is not loaded yet.';
+  els.topAuthBtn.textContent = email ? isTouchMapDevice() ? 'Routes' : 'Log out' : 'Log in';
+  els.topAuthBtn.classList.toggle('logged-in', Boolean(email));
+  els.routeUploadBtn.disabled = !verified;
+  els.routeUploadForm.classList.toggle('disabled', !verified);
+  els.mobileRouteMenu.hidden = !(isTouchMapDevice() && email && routePanelOpen);
+}
+
+function canUploadRoutes() {
+  const meta = authUser?.user_metadata || authUser?.user_metadata || {};
+  return Boolean(authUser && (meta.routeAccessKey === SIGNUP_SECRET || meta.route_access_key === SIGNUP_SECRET || meta.routeAccess === true));
+}
+
+function handleTopAuthClick() {
+  if (authUser && isTouchMapDevice()) {
+    setRoutePanelOpen(!routePanelOpen);
+    return;
+  }
+  if (authUser) {
+    window.netlifyIdentity?.logout?.();
+    return;
+  }
+  openAuthModal('login');
+}
+
+function openAuthModal(mode = 'login') {
+  setAuthModalMode(mode);
+  els.authModal.hidden = false;
+  els.authModalMessage.textContent = '';
+  setTimeout(() => els.authEmailInput?.focus(), 40);
+}
+
+function closeAuthModal() {
+  els.authModal.hidden = true;
+  els.authModalMessage.textContent = '';
+  els.customAuthForm.reset();
+}
+
+function setAuthModalMode(mode) {
+  authModalMode = mode === 'signup' ? 'signup' : 'login';
+  els.authModeLoginBtn.classList.toggle('active', authModalMode === 'login');
+  els.authModeSignupBtn.classList.toggle('active', authModalMode === 'signup');
+  els.authSecretInput.hidden = authModalMode !== 'signup';
+  els.authSecretInput.required = authModalMode === 'signup';
+  els.authPasswordInput.autocomplete = authModalMode === 'signup' ? 'new-password' : 'current-password';
+  els.authSubmitBtn.textContent = authModalMode === 'signup' ? 'Create account' : 'Log in';
+}
+
+async function handleCustomAuthSubmit(event) {
+  event.preventDefault();
+  if (!window.netlifyIdentity?.gotrue) {
+    els.authModalMessage.textContent = 'Netlify Identity is not ready yet.';
+    return;
+  }
+  const email = els.authEmailInput.value.trim();
+  const password = els.authPasswordInput.value;
+  const secret = els.authSecretInput.value.trim();
+  els.authSubmitBtn.disabled = true;
+  els.authModalMessage.textContent = authModalMode === 'signup' ? 'Creating account...' : 'Logging in...';
+  try {
+    if (authModalMode === 'signup') {
+      if (secret !== SIGNUP_SECRET) throw new Error('Wrong secret key.');
+      await window.netlifyIdentity.gotrue.signup(email, password, { routeAccessKey: SIGNUP_SECRET });
+      els.authModalMessage.textContent = 'Account created. Check your email if confirmation is enabled, then log in.';
+      setAuthModalMode('login');
+      els.authPasswordInput.value = '';
+      els.authSecretInput.value = '';
+    } else {
+      const user = await window.netlifyIdentity.gotrue.login(email, password, true);
+      authUser = user;
+      renderAuthState();
+      loadRoutes();
+      closeAuthModal();
+      showStatus('Logged in.');
+      setTimeout(hideStatus, 1200);
+    }
+  } catch (err) {
+    console.error(err);
+    els.authModalMessage.textContent = err?.json?.msg || err?.message || 'Authentication failed.';
+  } finally {
+    els.authSubmitBtn.disabled = false;
+  }
+}
+
+function setRoutePanelOpen(open) {
+  routePanelOpen = Boolean(open);
+  els.routesCard.classList.toggle('open', routePanelOpen);
+  els.topRoutesBtn.classList.toggle('active', routePanelOpen);
+  els.mobileRouteMenu.hidden = !(isTouchMapDevice() && authUser && routePanelOpen);
+  if (routePanelOpen) loadRoutes();
+}
+
+function setRouteFilter(filter) {
+  routeFilter = filter === 'mine' ? 'mine' : 'all';
+  [...els.routeTabs.querySelectorAll('[data-route-filter]')].forEach(tab => tab.classList.toggle('active', tab.dataset.routeFilter === routeFilter));
+  renderRoutes();
 }
 
 function initMap() {
@@ -774,7 +929,7 @@ async function loadRoutes() {
 async function handleRouteUpload(event) {
   event.preventDefault();
   const file = els.routeFileInput.files?.[0];
-  if (!authUser) return showStatus('Log in before uploading a GPX route.', true);
+  if (!canUploadRoutes()) return showStatus('Create an account with the secret key before uploading GPX routes.', true);
   if (!file) return showStatus('Choose a .gpx file first.', true);
   if (!file.name.toLowerCase().endsWith('.gpx')) return showStatus('Only .gpx files are supported.', true);
   if (file.size > 4 * 1024 * 1024) return showStatus('This GPX file is too large. Keep it below 4 MB.', true);
@@ -936,9 +1091,10 @@ function distanceBetweenKm(a, b) {
 }
 
 async function getIdentityToken() {
-  const user = window.netlifyIdentity?.currentUser?.();
+  const user = window.netlifyIdentity?.currentUser?.() || authUser;
   if (!user) return '';
-  return user.jwt();
+  if (typeof user.jwt === 'function') return user.jwt();
+  return user.token?.access_token || user.token?.accessToken || '';
 }
 
 async function safeJson(res) {

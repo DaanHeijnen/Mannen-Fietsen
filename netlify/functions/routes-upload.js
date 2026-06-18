@@ -8,6 +8,12 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
 
 const MAX_GPX_BYTES = 4 * 1024 * 1024;
 
+function hasRouteAccess(user) {
+  const meta = user?.user_metadata || user?.user_metadata || {};
+  return meta.routeAccessKey === 'Mannenavond' || meta.route_access_key === 'Mannenavond' || meta.routeAccess === true;
+}
+
+
 function cleanText(value, max = 120) {
   return String(value || '').replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, max);
 }
@@ -25,6 +31,7 @@ export default async (req, context) => {
 
   const user = await resolveUser(req, context);
   if (!user) return json({ error: 'Log in before uploading routes' }, 401);
+  if (!hasRouteAccess(user)) return json({ error: 'This account is not allowed to upload routes. Create an account with the secret key.' }, 403);
 
   try {
     const body = await req.json();
