@@ -17,6 +17,8 @@ const WINDOWS = {
 
 const API_VARIABLES = [
   'temperature_2m',
+  'relative_humidity_2m',
+  'uv_index',
   'precipitation_probability',
   'precipitation',
   'rain',
@@ -34,26 +36,23 @@ app.innerHTML = `
   <div class="topbar">
     <div class="brand">
       <div class="logo">🚴</div>
-      <div><h1>CycleCast Noord</h1><p>Wind + rain planner</p></div>
+      <div><h1>Mannen Fietsplanner</h1><p>Wind + rain planner</p></div>
     </div>
-    <div id="chipbar" class="chipbar"></div>
-  </div>
-  <div class="plannerbar">
-    <article class="card controls top-controls">
-      <div class="selectrow area-control"><label>Area</label><select id="zoneSelect"></select></div>
-      <div class="selectrow ride-control"><label>Ride window</label><select id="windowSelect"></select></div>
-    </article>
     <div class="searchbox">
       <input id="searchInput" placeholder="Search a place, e.g. Groningen, Assen, Leeuwarden" />
       <button id="searchBtn">Search</button>
     </div>
   </div>
   <div id="status" class="status"></div>
+  <div id="predictionNotice" class="prediction-notice" hidden>
+    <span id="predictionNoticeText">Showing predictions</span>
+    <button id="backToCurrentBtn" type="button">Back to current conditions</button>
+  </div>
   <section class="sidepanel">
     <article class="card hero">
       <div class="hero-head">
         <div>
-          <div class="eyebrow">Best cycling window</div>
+          <div class="eyebrow">Current conditions</div>
           <h2 id="heroTitle">Loading...</h2>
           <div id="heroSub" class="sub">Fetching Open-Meteo forecast for northern Netherlands.</div>
         </div>
@@ -67,6 +66,10 @@ app.innerHTML = `
       </div>
       <div id="routeTip" class="route-tip">Tip appears after forecast data loads.</div>
     </article>
+    <article class="card controls">
+      <div class="selectrow"><label>Area</label><select id="zoneSelect"></select></div>
+      <div class="selectrow"><label>Ride window</label><select id="windowSelect"></select></div>
+    </article>
     <article id="windows" class="card windows"></article>
   </section>
   <section class="bottompanel">
@@ -77,6 +80,9 @@ app.innerHTML = `
         <div class="pill"><span>Rain</span><strong id="dRain">--</strong></div>
         <div class="pill"><span>Wind</span><strong id="dWind">--</strong></div>
         <div class="pill"><span>Direction</span><strong id="dDir">--</strong></div>
+        <div class="pill"><span>Temp</span><strong id="dTemp">--</strong></div>
+        <div class="pill"><span>Humidity</span><strong id="dHumidity">--</strong></div>
+        <div class="pill"><span>UV</span><strong id="dUv">--</strong></div>
       </div>
     </article>
     <article class="card legend">
@@ -92,17 +98,25 @@ app.innerHTML = `
   </section>
 `;
 
-let map, markerLayer, heatLayer, selectedZone = ZONES[0], selectedWindow = 'day', selectedDayIndex = 0;
+let map, markerLayer, heatLayer, pinLayer, selectedZone = ZONES[0], selectedWindow = 'day', selectedDayIndex = 0, expandedDayIndex = null;
 let forecast = null;
 let particles = [];
 let animationFrame = null;
+let lastWindFrame = 0;
+let lastWindDrawAt = 0;
+let windWatchdogTimer = null;
+let mapResizeObserver = null;
+let mapResizeTimer = null;
+let activePin = null;
 
 const els = {
-  chipbar: document.querySelector('#chipbar'),
   zoneSelect: document.querySelector('#zoneSelect'),
   windowSelect: document.querySelector('#windowSelect'),
   windows: document.querySelector('#windows'),
   status: document.querySelector('#status'),
+  predictionNotice: document.querySelector('#predictionNotice'),
+  predictionNoticeText: document.querySelector('#predictionNoticeText'),
+  backToCurrentBtn: document.querySelector('#backToCurrentBtn'),
   heroTitle: document.querySelector('#heroTitle'),
   heroSub: document.querySelector('#heroSub'),
   scoreBubble: document.querySelector('#scoreBubble'),
@@ -115,60 +129,114 @@ const els = {
   dRain: document.querySelector('#dRain'),
   dWind: document.querySelector('#dWind'),
   dDir: document.querySelector('#dDir'),
+  dTemp: document.querySelector('#dTemp'),
+  dHumidity: document.querySelector('#dHumidity'),
+  dUv: document.querySelector('#dUv'),
   detailTitle: document.querySelector('#detailTitle'),
   searchInput: document.querySelector('#searchInput'),
   searchBtn: document.querySelector('#searchBtn'),
   canvas: null
 };
 
+
+function scheduleMapRefresh(delay = 0) {
+  if (!map) return;
+  clearTimeout(mapResizeTimer);
+  mapResizeTimer = setTimeout(() => {
+    map.invalidateSize(false);
+    resizeCanvas();
+    drawWeatherOverlay();
+  }, delay);
+}
+
+function isTouchMapDevice() {
+  return window.matchMedia?.('(pointer: coarse)').matches || window.innerWidth <= 980;
+}
+
 function init() {
   initControls();
   initMap();
   resizeCanvas();
-  window.addEventListener('resize', resizeCanvas);
+  window.addEventListener('resize', () => scheduleMapRefresh(80));
+  window.addEventListener('orientationchange', () => scheduleMapRefresh(350));
+  window.visualViewport?.addEventListener('resize', () => scheduleMapRefresh(120));
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && forecast) startWind(false);
+  });
   loadForecast(selectedZone);
 }
 
 function initControls() {
-  els.chipbar.innerHTML = ZONES.map(z => `<button class="chip ${z.id === selectedZone.id ? 'active' : ''}" data-zone="${z.id}">${z.short}</button>`).join('');
   els.zoneSelect.innerHTML = ZONES.map(z => `<option value="${z.id}">${z.name}</option>`).join('');
   els.windowSelect.innerHTML = Object.entries(WINDOWS).map(([id, w]) => `<option value="${id}">${w.label}</option>`).join('');
-  els.chipbar.addEventListener('click', e => {
-    const btn = e.target.closest('[data-zone]');
-    if (btn) setZone(btn.dataset.zone);
-  });
   els.zoneSelect.addEventListener('change', e => setZone(e.target.value));
   els.windowSelect.addEventListener('change', e => {
     selectedWindow = e.target.value;
     selectedDayIndex = 0;
+    expandedDayIndex = null;
     renderAll();
   });
+  els.backToCurrentBtn.addEventListener('click', backToCurrentConditions);
   els.searchBtn.addEventListener('click', searchPlace);
   els.searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') searchPlace(); });
 }
 
 function initMap() {
+  // Mobile WebViews can render Leaflet's translated tile layers as blocky chunks.
+  // Force the stable non-3D path before Leaflet creates the map.
+  if (L?.Browser) L.Browser.any3d = false;
+
   map = L.map('map', {
     zoomControl: false,
     minZoom: 7,
     maxZoom: 13,
     preferCanvas: true,
-    worldCopyJump: false
+    worldCopyJump: false,
+    touchZoom: true,
+    tap: false,
+    bounceAtZoomLimits: false,
+    zoomAnimation: false,
+    fadeAnimation: false,
+    markerZoomAnimation: false,
+    inertia: false
   }).setView([53.13, 5.65], 8);
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    subdomains: 'abcd',
+  // Use standard OSM raster tiles and darken them with CSS. This proved more stable
+  // than provider-side dark tiles in mobile preview/webview environments.
+  const baseTiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO | Weather data by Open-Meteo',
-    crossOrigin: true,
-    updateWhenIdle: false,
+    attribution: '&copy; OpenStreetMap contributors | Weather data by Open-Meteo',
+    crossOrigin: false,
+    updateWhenIdle: true,
     updateWhenZooming: false,
-    keepBuffer: 4
+    keepBuffer: 3,
+    tileSize: 256,
+    className: 'base-map-tile'
   }).addTo(map);
+
+  baseTiles.on('tileerror', event => {
+    const img = event.tile;
+    if (!img.dataset.fallback) {
+      img.dataset.fallback = '1';
+      img.src = img.src.replace('https://tile.openstreetmap.org', 'https://a.tile.openstreetmap.org');
+    }
+  });
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   markerLayer = L.layerGroup().addTo(map);
   heatLayer = L.layerGroup().addTo(map);
+  pinLayer = L.layerGroup().addTo(map);
+
+  // Prevent the browser itself from handling two-finger zoom on mobile.
+  // This keeps Leaflet in control, so the zoom stays centered between the two fingers
+  // and the map does not disappear during pinch gestures.
+  const mapContainer = map.getContainer();
+  mapContainer.addEventListener('touchmove', event => {
+    if (event.touches && event.touches.length > 1) event.preventDefault();
+  }, { passive: false });
+  ['gesturestart', 'gesturechange'].forEach(type => {
+    mapContainer.addEventListener(type, event => event.preventDefault(), { passive: false });
+  });
 
   // Keep the wind animation attached to the map container itself.
   // This fixes the bug where the canvas sits outside Leaflet and the map tiles render in broken blocks.
@@ -179,23 +247,21 @@ function initMap() {
 
   renderMarkers();
 
-  map.on('moveend zoomend resize', () => {
-    resizeCanvas();
-    drawWeatherOverlay();
-  });
+  map.on('moveend zoomend resize', () => scheduleMapRefresh(20));
+  map.on('click', handleMapClick);
+
+  const mapEl = map.getContainer();
+  if ('ResizeObserver' in window) {
+    mapResizeObserver = new ResizeObserver(() => scheduleMapRefresh(80));
+    mapResizeObserver.observe(mapEl);
+  }
+  mapEl.addEventListener('transitionend', () => scheduleMapRefresh(80));
 
   // Leaflet sometimes calculates a wrong initial size when the UI is injected dynamically.
   // Force a recalculation after the browser has painted the page.
-  requestAnimationFrame(() => {
-    map.invalidateSize(true);
-    resizeCanvas();
-    drawWeatherOverlay();
-  });
-  setTimeout(() => {
-    map.invalidateSize(true);
-    resizeCanvas();
-    drawWeatherOverlay();
-  }, 250);
+  requestAnimationFrame(() => scheduleMapRefresh(0));
+  setTimeout(() => scheduleMapRefresh(250), 250);
+  setTimeout(() => scheduleMapRefresh(700), 700);
 }
 
 function renderMarkers() {
@@ -209,9 +275,10 @@ function renderMarkers() {
 async function setZone(id) {
   selectedZone = ZONES.find(z => z.id === id) || ZONES[0];
   selectedDayIndex = 0;
+  expandedDayIndex = null;
   els.zoneSelect.value = selectedZone.id;
-  [...els.chipbar.querySelectorAll('.chip')].forEach(b => b.classList.toggle('active', b.dataset.zone === selectedZone.id));
   map.setView([selectedZone.lat, selectedZone.lon], selectedZone.zoom);
+  clearActivePin();
   await loadForecast(selectedZone);
 }
 
@@ -225,9 +292,11 @@ async function searchPlace() {
     if (!data.results?.length) return showStatus('No location found. Try Groningen, Leeuwarden or Assen.', true);
     const p = data.results[0];
     selectedZone = { id: 'custom', name: `${p.name}${p.admin1 ? ', ' + p.admin1 : ''}`, short: p.name, lat: p.latitude, lon: p.longitude, zoom: 10 };
+    selectedDayIndex = 0;
+    expandedDayIndex = null;
     els.zoneSelect.value = ZONES[0].id;
-    [...els.chipbar.querySelectorAll('.chip')].forEach(b => b.classList.remove('active'));
     map.setView([selectedZone.lat, selectedZone.lon], 10);
+    clearActivePin();
     await loadForecast(selectedZone);
   } catch (err) {
     console.error(err);
@@ -244,8 +313,7 @@ async function loadForecast(zone) {
     showStatus(`Forecast loaded for ${zone.name}.`);
     setTimeout(hideStatus, 1400);
     renderAll();
-    initWindParticles();
-    animateWind();
+    startWind();
   } catch (err) {
     console.error(err);
     showStatus('Open-Meteo forecast could not be loaded. The app is running, but weather data failed. Try refreshing.', true);
@@ -283,6 +351,8 @@ function transformForecast(data, zone) {
     time: new Date(time),
     iso: time,
     temp: n(h.temperature_2m?.[i]),
+    humidity: n(h.relative_humidity_2m?.[i]),
+    uv: n(h.uv_index?.[i]),
     rainProb: n(h.precipitation_probability?.[i]),
     precip: n(h.precipitation?.[i]),
     rain: n(h.rain?.[i]) + n(h.showers?.[i]),
@@ -323,11 +393,13 @@ function summarizeWindow(items, dayIndex, id) {
   const gust = Math.max(...items.map(i => i.gust));
   const dir = circularMean(items.map(i => i.dir), items.map(i => Math.max(1, i.wind)));
   const temp = avg(items.map(i => i.temp));
+  const humidity = avg(items.map(i => i.humidity));
+  const uv = Math.max(...items.map(i => i.uv));
   const clouds = avg(items.map(i => i.clouds));
   const score = cyclingScore({ rainProb, rainAmount, wind, gust, dayIndex });
   const confidence = confidenceScore({ rainProb, rainAmount, wind, gust, dayIndex, items });
   const grade = score >= 74 ? 'good' : score >= 48 ? 'maybe' : 'bad';
-  return { id, rainProb, rainAmount, wind, gust, dir, temp, clouds, score, confidence, grade };
+  return { id, rainProb, rainAmount, wind, gust, dir, temp, humidity, uv, clouds, score, confidence, grade };
 }
 
 function cyclingScore({ rainProb, rainAmount, wind, gust, dayIndex }) {
@@ -355,39 +427,70 @@ function renderAll() {
   renderHero();
   renderWindows();
   renderDetail();
+  renderPredictionNotice();
   drawWeatherOverlay();
+  refreshActivePin();
 }
 
 function renderHero() {
-  const best = getBestWindow();
-  els.heroTitle.textContent = `${dayLabel(best.day.date)} ${WINDOWS[best.summary.id].label.toLowerCase()}`;
-  els.heroSub.textContent = `${forecast.zone.name}: ${adviceText(best.summary)}.`;
-  els.scoreBubble.style.setProperty('--score', best.summary.score);
-  els.scoreBubble.querySelector('span').textContent = best.summary.score;
-  els.mRain.textContent = `${Math.round(best.summary.rainProb)}% / ${best.summary.rainAmount.toFixed(1)} mm/h`;
-  els.mWind.textContent = `${Math.round(best.summary.wind)} km/h`;
-  els.mGust.textContent = `${Math.round(best.summary.gust)} km/h`;
-  els.mConfidence.textContent = `${best.summary.confidence}%`;
-  els.routeTip.textContent = routeTip(best.summary.dir, best.summary.wind, best.summary.gust);
+  const current = getCurrentConditionsSummary();
+  if (!current) return;
+  const h = current.hour;
+  const s = current.summary;
+  els.heroTitle.textContent = `Now in ${forecast.zone.name}`;
+  els.heroSub.textContent = `${Math.round(h.temp)}°C · ${weatherDescription(h.code)} · ${Math.round(h.rainProb)}% rain risk.`;
+  els.scoreBubble.style.setProperty('--score', s.score);
+  els.scoreBubble.querySelector('span').textContent = s.score;
+  els.mRain.textContent = `${Math.round(h.rainProb)}% / ${formatRainMm(Math.max(h.precip, h.rain), h.rainProb)}`;
+  els.mWind.textContent = `${Math.round(h.wind)} km/h`;
+  els.mGust.textContent = `${Math.round(h.gust)} km/h`;
+  els.mConfidence.textContent = `${s.confidence}%`;
+  els.routeTip.textContent = routeTip(h.dir, h.wind, h.gust);
 }
 
 function renderWindows() {
   els.windows.innerHTML = forecast.days.map((day, idx) => {
     const s = day.windows[selectedWindow];
     const cl = s.grade === 'good' ? '' : s.grade;
-    return `<div class="window-row ${idx === selectedDayIndex ? 'selected' : ''}" data-day="${idx}">
-      <div><div class="day">${dayLabel(day.date)}</div><div class="date">${dateShort(day.date)}</div></div>
-      <div>
-        <div class="row-title"><span>${adviceText(s)}</span><span>${Math.round(s.confidence)}% confidence</span></div>
-        <div class="bar"><div class="fill ${cl}" style="width:${s.score}%"></div></div>
-      </div>
-      <div class="grade ${cl}">${s.grade.toUpperCase()}</div>
+    const expanded = idx === expandedDayIndex;
+    return `<div class="window-day ${expanded ? 'expanded' : ''}" data-day="${idx}">
+      <button class="window-row ${expanded ? 'selected' : ''}" type="button" aria-expanded="${expanded}">
+        <div><div class="day">${dayLabel(day.date)}</div><div class="date">${dateShort(day.date)}</div></div>
+        <div>
+          <div class="row-title"><span>${adviceText(s)}</span><span>${Math.round(s.confidence)}% confidence</span></div>
+          <div class="bar"><div class="fill ${cl}" style="width:${s.score}%"></div></div>
+        </div>
+        <div class="grade ${cl}">${s.grade.toUpperCase()}</div>
+      </button>
+      ${expanded ? renderHourlyRain(day) : ''}
     </div>`;
   }).join('');
-  els.windows.querySelectorAll('[data-day]').forEach(row => row.addEventListener('click', () => {
-    selectedDayIndex = Number(row.dataset.day);
+  els.windows.querySelectorAll('[data-day] > .window-row').forEach(row => row.addEventListener('click', () => {
+    const idx = Number(row.closest('[data-day]').dataset.day);
+    selectedDayIndex = idx;
+    expandedDayIndex = expandedDayIndex === idx ? null : idx;
     renderAll();
   }));
+}
+
+function renderHourlyRain(day) {
+  const rows = day.items.map(hour => {
+    const amount = Math.max(hour.precip, hour.rain);
+    const prob = Math.round(hour.rainProb);
+    const rainWidth = clamp(prob, 2, 100);
+    const amountText = formatRainMm(amount, prob).replace('<', '&lt;');
+    return `<div class="hour-row">
+      <span class="hour-time">${hourLabel(hour.time)}</span>
+      <span class="hour-rainbar"><i style="width:${rainWidth}%"></i></span>
+      <strong>${prob}%</strong>
+      <span>${amountText}</span>
+    </div>`;
+  }).join('');
+
+  return `<div class="hourly-panel">
+    <div class="hourly-head"><span>Hourly rain forecast</span><span>Chance / amount</span></div>
+    <div class="hourly-list">${rows}</div>
+  </div>`;
 }
 
 function renderDetail() {
@@ -395,9 +498,138 @@ function renderDetail() {
   const s = day.windows[selectedWindow];
   els.detailTitle.textContent = `${dateLong(day.date)} · ${WINDOWS[selectedWindow].label} · ${forecast.zone.name}`;
   els.dScore.textContent = `${s.score}/100 ${s.grade}`;
-  els.dRain.textContent = `${Math.round(s.rainProb)}%, ${s.rainAmount.toFixed(1)} mm/h`;
-  els.dWind.textContent = `${Math.round(s.wind)} km/h, gusts ${Math.round(s.gust)}`;
+  els.dRain.textContent = `${Math.round(s.rainProb)}%, ${formatRainMm(s.rainAmount, s.rainProb)}/h`;
+  els.dWind.textContent = `${Math.round(s.wind)} km/h, gusts ${Math.round(s.gust)} km/h`;
   els.dDir.textContent = `${compass(s.dir)} (${Math.round(s.dir)}°)`;
+}
+
+function renderPredictionNotice() {
+  if (!forecast || selectedDayIndex === 0) {
+    els.predictionNotice.hidden = true;
+    return;
+  }
+  const day = forecast.days[selectedDayIndex];
+  els.predictionNoticeText.textContent = `Showing predictions for ${dateLong(day.date)}`;
+  els.predictionNotice.hidden = false;
+}
+
+function backToCurrentConditions() {
+  selectedDayIndex = 0;
+  expandedDayIndex = null;
+  renderAll();
+  startWind(false);
+}
+
+function getCurrentConditionsSummary(sourceForecast = forecast) {
+  if (!sourceForecast?.hours?.length) return null;
+  const now = new Date();
+  let hour = sourceForecast.hours[0];
+  let bestDiff = Math.abs(hour.time - now);
+  sourceForecast.hours.forEach(row => {
+    const diff = Math.abs(row.time - now);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      hour = row;
+    }
+  });
+  const dayIndex = Math.max(0, sourceForecast.days.findIndex(day => day.key === hour.iso.slice(0, 10)));
+  const summary = summarizeWindow([hour], dayIndex, 'current');
+  return { hour, summary, dayIndex };
+}
+
+function getSelectedForecastSummary(sourceForecast = forecast) {
+  if (!sourceForecast) return null;
+  if (selectedDayIndex === 0) return getCurrentConditionsSummary(sourceForecast);
+  const day = sourceForecast.days[selectedDayIndex] || sourceForecast.days[0];
+  const summary = day.windows[selectedWindow];
+  return { hour: findBestHourForWindow(day, selectedWindow), summary, dayIndex: selectedDayIndex, day };
+}
+
+function findBestHourForWindow(day, windowId) {
+  const w = WINDOWS[windowId] || WINDOWS.day;
+  const hours = day.items.filter(row => row.time.getHours() >= w.start && row.time.getHours() < w.end);
+  if (!hours.length) return day.items[0];
+  const targetHour = Math.round((w.start + w.end) / 2);
+  return hours.reduce((best, row) => Math.abs(row.time.getHours() - targetHour) < Math.abs(best.time.getHours() - targetHour) ? row : best, hours[0]);
+}
+
+function weatherDescription(code) {
+  if ([0].includes(code)) return 'Clear';
+  if ([1, 2, 3].includes(code)) return 'Cloudy';
+  if ([45, 48].includes(code)) return 'Fog';
+  if ([51, 53, 55, 56, 57].includes(code)) return 'Drizzle';
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return 'Rain';
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return 'Snow';
+  if ([95, 96, 99].includes(code)) return 'Thunderstorm';
+  return 'Forecast';
+}
+
+async function handleMapClick(event) {
+  if (!event?.latlng) return;
+  const { lat, lng } = event.latlng;
+  setPinLoading(lat, lng);
+  try {
+    const data = await getForecast(lat, lng);
+    const pinForecast = transformForecast(data, { id: 'pin', name: 'Dropped pin', short: 'Pin', lat, lon: lng, zoom: map.getZoom() });
+    const selection = getSelectedForecastSummary(pinForecast);
+    activePin = { lat, lon: lng, forecast: pinForecast };
+    renderPin(selection);
+  } catch (err) {
+    console.error(err);
+    setPinError(lat, lng);
+  }
+}
+
+function setPinLoading(lat, lon) {
+  if (!pinLayer) return;
+  pinLayer.clearLayers();
+  activePin = { lat, lon, forecast: null };
+  L.marker([lat, lon], { icon: pinIcon('Loading...') })
+    .addTo(pinLayer)
+    .bindTooltip('Loading wind...', { permanent: true, direction: 'top', offset: [0, -18], className: 'wind-pin-tooltip' })
+    .openTooltip();
+}
+
+function renderPin(selection) {
+  if (!activePin || !pinLayer || !selection?.summary) return;
+  const s = selection.summary;
+  const label = selectedDayIndex === 0
+    ? `Now: ${Math.round(s.wind)} km/h · gusts ${Math.round(s.gust)} km/h`
+    : `${dateShort(forecast.days[selectedDayIndex].date)} ${WINDOWS[selectedWindow].label}: ${Math.round(s.wind)} km/h · gusts ${Math.round(s.gust)} km/h`;
+
+  pinLayer.clearLayers();
+  L.marker([activePin.lat, activePin.lon], { icon: pinIcon(`${Math.round(s.wind)} km/h`) })
+    .addTo(pinLayer)
+    .bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -20], className: 'wind-pin-tooltip' })
+    .openTooltip();
+}
+
+function refreshActivePin() {
+  if (!activePin?.forecast) return;
+  renderPin(getSelectedForecastSummary(activePin.forecast));
+}
+
+function setPinError(lat, lon) {
+  if (!pinLayer) return;
+  pinLayer.clearLayers();
+  L.marker([lat, lon], { icon: pinIcon('Error') })
+    .addTo(pinLayer)
+    .bindTooltip('Could not load wind for this point', { permanent: true, direction: 'top', offset: [0, -18], className: 'wind-pin-tooltip' })
+    .openTooltip();
+}
+
+function clearActivePin() {
+  activePin = null;
+  pinLayer?.clearLayers();
+}
+
+function pinIcon(text) {
+  return L.divIcon({
+    className: '',
+    html: `<div class="wind-pin"><span>${text}</span></div>`,
+    iconSize: [74, 38],
+    iconAnchor: [37, 38]
+  });
 }
 
 function renderError() {
@@ -454,72 +686,172 @@ function resizeCanvas() {
   els.canvas.style.height = `${rect.height}px`;
   els.canvas.width = Math.max(1, Math.floor(rect.width * ratio));
   els.canvas.height = Math.max(1, Math.floor(rect.height * ratio));
-  els.canvas.getContext('2d').setTransform(ratio, 0, 0, ratio, 0, 0);
+  const ctx = els.canvas.getContext('2d');
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, rect.width, rect.height);
   initWindParticles();
+  ensureWindRunning();
 }
 
 function initWindParticles() {
   if (!els.canvas || !map) return;
   const rect = map.getContainer().getBoundingClientRect();
-  const count = Math.max(90, Math.min(380, Math.floor(rect.width * rect.height / 3300)));
-  particles = Array.from({ length: count }, () => ({
-    x: Math.random() * rect.width,
-    y: Math.random() * rect.height,
-    life: 40 + Math.random() * 100,
-    wobble: Math.random() * 1000
-  }));
+  const count = Math.max(150, Math.min(620, Math.floor(rect.width * rect.height / 2200)));
+  particles = Array.from({ length: count }, () => createWindParticle(rect, true));
 }
 
-function animateWind() {
+function createWindParticle(rect, anywhere = false) {
+  const s = forecast?.days[selectedDayIndex]?.windows[selectedWindow];
+  const dir = s ? s.dir : 270;
+
+  // Open-Meteo gives the direction wind comes FROM. The animation moves TO the opposite side.
+  const rad = ((dir + 180) * Math.PI / 180);
+  const vx = Math.sin(rad);
+  const vy = -Math.cos(rad);
+  const margin = 24;
+
+  if (anywhere) {
+    const life = 150 + Math.random() * 240;
+    return {
+      x: Math.random() * rect.width,
+      y: Math.random() * rect.height,
+      age: Math.random() * life * 0.55,
+      life,
+      wobble: Math.random() * 1000
+    };
+  }
+
+  let x;
+  let y;
+  const entryJitter = Math.random() * 42;
+  if (Math.abs(vx) > Math.abs(vy)) {
+    x = vx > 0 ? -margin + entryJitter : rect.width + margin - entryJitter;
+    y = Math.random() * rect.height;
+  } else {
+    x = Math.random() * rect.width;
+    y = vy > 0 ? -margin + entryJitter : rect.height + margin - entryJitter;
+  }
+
+  return {
+    x,
+    y,
+    age: Math.random() * 8,
+    life: 110 + Math.random() * 170,
+    wobble: Math.random() * 1000
+  };
+}
+
+function startWind(resetParticles = true) {
   if (!els.canvas || !map) return;
+  if (animationFrame) cancelAnimationFrame(animationFrame);
+  animationFrame = null;
+  lastWindFrame = 0;
+  if (resetParticles || !particles.length) initWindParticles();
+  animationFrame = requestAnimationFrame(animateWind);
+  startWindWatchdog();
+}
+
+function ensureWindRunning() {
+  if (!forecast || document.hidden) return;
+  if (!animationFrame) startWind(false);
+}
+
+function startWindWatchdog() {
+  if (windWatchdogTimer) return;
+  windWatchdogTimer = setInterval(() => {
+    if (!forecast || document.hidden) return;
+    const stale = !animationFrame || performance.now() - lastWindDrawAt > 2200;
+    if (stale) startWind(false);
+  }, 1500);
+}
+
+function animateWind(now = performance.now()) {
+  if (!els.canvas || !map) {
+    animationFrame = requestAnimationFrame(animateWind);
+    return;
+  }
+
+  // Cap the animation a little. It keeps the effect calm and avoids harsh jumps on slower devices.
+  if (now - lastWindFrame < 28) {
+    animationFrame = requestAnimationFrame(animateWind);
+    return;
+  }
+  lastWindFrame = now;
+
   const ctx = els.canvas.getContext('2d');
   const rect = map.getContainer().getBoundingClientRect();
-  ctx.clearRect(0, 0, rect.width, rect.height);
-
+  if (rect.width < 2 || rect.height < 2) {
+    animationFrame = requestAnimationFrame(animateWind);
+    return;
+  }
+  lastWindDrawAt = now;
   const s = forecast?.days[selectedDayIndex]?.windows[selectedWindow];
   const windKmh = s ? s.wind : 14;
   const gustKmh = s ? s.gust : windKmh;
 
-  // Open-Meteo wind direction is the direction the wind comes FROM.
-  // The particles should move TO the opposite direction, so add 180 degrees.
+  // Fade previous lines instead of clearing the whole canvas. This creates a softer Windy-like trail.
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.88)';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  ctx.globalCompositeOperation = 'source-over';
+
   const rad = s ? ((s.dir + 180) * Math.PI / 180) : 0;
-  const speed = clamp(0.11 * windKmh + 0.7, 1.2, 9.5);
-  const tail = clamp(5 + windKmh * 0.38, 7, 26);
-  const alphaBase = clamp(0.24 + windKmh / 80, 0.32, 0.88);
+  const speed = clamp(0.075 * windKmh + 0.45, 0.85, 5.2);
+  const tail = clamp(4 + windKmh * 0.24, 6, 18);
+  const alphaBase = clamp(0.16 + windKmh / 120, 0.20, 0.56);
   const vx = Math.sin(rad) * speed;
   const vy = -Math.cos(rad) * speed;
 
-  ctx.lineWidth = clamp(1.1 + gustKmh / 80, 1.2, 2.2);
+  ctx.lineWidth = clamp(0.75 + gustKmh / 150, 0.85, 1.65);
   ctx.lineCap = 'round';
 
-  particles.forEach(p => {
-    const oldX = p.x - Math.sin(rad) * tail;
-    const oldY = p.y + Math.cos(rad) * tail;
-    const wobble = Date.now() / 650 + p.wobble;
-    p.x += vx + Math.sin((p.y + wobble) / 54) * 0.42;
-    p.y += vy + Math.cos((p.x + wobble) / 64) * 0.32;
-    p.life -= 1;
+  // Keep the field evenly populated. Without this, long-lived particles can
+  // drift off-screen together and the visible wind appears stuck near one edge.
+  let visibleParticles = 0;
 
-    if (p.x < -40 || p.x > rect.width + 40 || p.y < -40 || p.y > rect.height + 40 || p.life <= 0) {
-      p.x = Math.random() * rect.width;
-      p.y = Math.random() * rect.height;
-      p.life = 55 + Math.random() * 110;
-      p.wobble = Math.random() * 1000;
+  particles.forEach((p, index) => {
+    const prevX = p.x;
+    const prevY = p.y;
+    const wobble = now / 900 + p.wobble;
+
+    p.x += vx + Math.sin((p.y + wobble) / 58) * 0.22;
+    p.y += vy + Math.cos((p.x + wobble) / 70) * 0.18;
+    p.age += 1;
+
+    const outside = p.x < -50 || p.x > rect.width + 50 || p.y < -50 || p.y > rect.height + 50;
+    if (!outside) visibleParticles += 1;
+    if (outside || p.age > p.life) {
+      // Important: do not draw from the old position to this new position.
+      // Respawn across the whole viewport instead of only at the entry edge,
+      // otherwise the animation slowly collects at one side of the map.
+      particles[index] = createWindParticle(rect, true);
+      return;
     }
 
-    const alpha = clamp((p.life / 120) * alphaBase, 0.12, 0.9);
-    ctx.strokeStyle = `rgba(235,248,255,${alpha})`;
+    const fadeIn = clamp((p.age + 6) / 20, 0, 1);
+    const fadeOut = clamp((p.life - p.age) / 32, 0, 1);
+    const alpha = clamp(alphaBase * fadeIn * fadeOut, 0.04, 0.55);
+
+    ctx.strokeStyle = `rgba(226, 246, 255, ${alpha})`;
     ctx.beginPath();
-    ctx.moveTo(oldX, oldY);
+    ctx.moveTo(prevX - Math.sin(rad) * tail * 0.25, prevY + Math.cos(rad) * tail * 0.25);
     ctx.lineTo(p.x, p.y);
     ctx.stroke();
   });
+
+  if (visibleParticles < particles.length * 0.45) {
+    const refillCount = Math.ceil(particles.length * 0.18);
+    for (let i = 0; i < refillCount; i += 1) {
+      particles[Math.floor(Math.random() * particles.length)] = createWindParticle(rect, true);
+    }
+  }
 
   animationFrame = requestAnimationFrame(animateWind);
 }
 
 function stopWind() {
   if (animationFrame) cancelAnimationFrame(animationFrame);
+  animationFrame = null;
 }
 
 function readCache(key, maxAge) {
@@ -540,6 +872,16 @@ function showStatus(msg, sticky = false) {
 }
 function hideStatus() { els.status.classList.remove('show'); }
 
+function formatRainMm(value, rainProb = 0) {
+  const mm = n(value);
+  const prob = n(rainProb);
+  if (mm > 0 && mm < 0.1) return '<0.1 mm';
+  if (mm === 0 && prob > 0) return '<0.1 mm';
+  return `${mm.toFixed(1)} mm`;
+}
+function formatTemp(value) { return `${Math.round(n(value))}°C`; }
+function formatHumidity(value) { return `${Math.round(n(value))}%`; }
+function formatUv(value) { return n(value) < 0.1 ? 'UV 0' : `UV ${n(value).toFixed(1)}`; }
 function n(x) { return Number.isFinite(Number(x)) ? Number(x) : 0; }
 function avg(arr) { return arr.length ? sum(arr) / arr.length : 0; }
 function sum(arr) { return arr.reduce((a, b) => a + n(b), 0); }
@@ -550,6 +892,7 @@ function circularMean(degs, weights) {
   degs.forEach((deg, i) => { const r = deg * Math.PI / 180; const w = weights[i] || 1; x += Math.sin(r) * w; y += Math.cos(r) * w; });
   return (Math.atan2(x, y) * 180 / Math.PI + 360) % 360;
 }
+function hourLabel(d) { return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(d); }
 function dayLabel(d) { return new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(d); }
 function dateShort(d) { return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' }).format(d); }
 function dateLong(d) { return new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: '2-digit', month: 'long' }).format(d); }

@@ -17,6 +17,8 @@ const WINDOWS = {
 
 const API_VARIABLES = [
   'temperature_2m',
+  'relative_humidity_2m',
+  'uv_index',
   'precipitation_probability',
   'precipitation',
   'rain',
@@ -78,6 +80,9 @@ app.innerHTML = `
         <div class="pill"><span>Rain</span><strong id="dRain">--</strong></div>
         <div class="pill"><span>Wind</span><strong id="dWind">--</strong></div>
         <div class="pill"><span>Direction</span><strong id="dDir">--</strong></div>
+        <div class="pill"><span>Temp</span><strong id="dTemp">--</strong></div>
+        <div class="pill"><span>Humidity</span><strong id="dHumidity">--</strong></div>
+        <div class="pill"><span>UV</span><strong id="dUv">--</strong></div>
       </div>
     </article>
     <article class="card legend">
@@ -124,6 +129,9 @@ const els = {
   dRain: document.querySelector('#dRain'),
   dWind: document.querySelector('#dWind'),
   dDir: document.querySelector('#dDir'),
+  dTemp: document.querySelector('#dTemp'),
+  dHumidity: document.querySelector('#dHumidity'),
+  dUv: document.querySelector('#dUv'),
   detailTitle: document.querySelector('#detailTitle'),
   searchInput: document.querySelector('#searchInput'),
   searchBtn: document.querySelector('#searchBtn'),
@@ -139,6 +147,10 @@ function scheduleMapRefresh(delay = 0) {
     resizeCanvas();
     drawWeatherOverlay();
   }, delay);
+}
+
+function isTouchMapDevice() {
+  return window.matchMedia?.('(pointer: coarse)').matches || window.innerWidth <= 980;
 }
 
 function init() {
@@ -180,6 +192,9 @@ function initMap() {
     maxZoom: 13,
     preferCanvas: true,
     worldCopyJump: false,
+    touchZoom: true,
+    tap: false,
+    bounceAtZoomLimits: false,
     zoomAnimation: false,
     fadeAnimation: false,
     markerZoomAnimation: false,
@@ -211,6 +226,17 @@ function initMap() {
   markerLayer = L.layerGroup().addTo(map);
   heatLayer = L.layerGroup().addTo(map);
   pinLayer = L.layerGroup().addTo(map);
+
+  // Prevent the browser itself from handling two-finger zoom on mobile.
+  // This keeps Leaflet in control, so the zoom stays centered between the two fingers
+  // and the map does not disappear during pinch gestures.
+  const mapContainer = map.getContainer();
+  mapContainer.addEventListener('touchmove', event => {
+    if (event.touches && event.touches.length > 1) event.preventDefault();
+  }, { passive: false });
+  ['gesturestart', 'gesturechange'].forEach(type => {
+    mapContainer.addEventListener(type, event => event.preventDefault(), { passive: false });
+  });
 
   // Keep the wind animation attached to the map container itself.
   // This fixes the bug where the canvas sits outside Leaflet and the map tiles render in broken blocks.
@@ -325,6 +351,8 @@ function transformForecast(data, zone) {
     time: new Date(time),
     iso: time,
     temp: n(h.temperature_2m?.[i]),
+    humidity: n(h.relative_humidity_2m?.[i]),
+    uv: n(h.uv_index?.[i]),
     rainProb: n(h.precipitation_probability?.[i]),
     precip: n(h.precipitation?.[i]),
     rain: n(h.rain?.[i]) + n(h.showers?.[i]),
@@ -365,11 +393,13 @@ function summarizeWindow(items, dayIndex, id) {
   const gust = Math.max(...items.map(i => i.gust));
   const dir = circularMean(items.map(i => i.dir), items.map(i => Math.max(1, i.wind)));
   const temp = avg(items.map(i => i.temp));
+  const humidity = avg(items.map(i => i.humidity));
+  const uv = Math.max(...items.map(i => i.uv));
   const clouds = avg(items.map(i => i.clouds));
   const score = cyclingScore({ rainProb, rainAmount, wind, gust, dayIndex });
   const confidence = confidenceScore({ rainProb, rainAmount, wind, gust, dayIndex, items });
   const grade = score >= 74 ? 'good' : score >= 48 ? 'maybe' : 'bad';
-  return { id, rainProb, rainAmount, wind, gust, dir, temp, clouds, score, confidence, grade };
+  return { id, rainProb, rainAmount, wind, gust, dir, temp, humidity, uv, clouds, score, confidence, grade };
 }
 
 function cyclingScore({ rainProb, rainAmount, wind, gust, dayIndex }) {
@@ -849,6 +879,9 @@ function formatRainMm(value, rainProb = 0) {
   if (mm === 0 && prob > 0) return '<0.1 mm';
   return `${mm.toFixed(1)} mm`;
 }
+function formatTemp(value) { return `${Math.round(n(value))}°C`; }
+function formatHumidity(value) { return `${Math.round(n(value))}%`; }
+function formatUv(value) { return n(value) < 0.1 ? 'UV 0' : `UV ${n(value).toFixed(1)}`; }
 function n(x) { return Number.isFinite(Number(x)) ? Number(x) : 0; }
 function avg(arr) { return arr.length ? sum(arr) / arr.length : 0; }
 function sum(arr) { return arr.reduce((a, b) => a + n(b), 0); }
