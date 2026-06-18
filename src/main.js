@@ -15,6 +15,8 @@ const WINDOWS = {
   evening: { label: 'Evening', start: 18, end: 22 }
 };
 
+const SIGNUP_SECRET = 'Mannenavond';
+
 const API_VARIABLES = [
   'temperature_2m',
   'relative_humidity_2m',
@@ -38,9 +40,15 @@ app.innerHTML = `
       <div class="logo">🚴</div>
       <div><h1>Mannen Fietsplanner</h1><p>Wind + rain planner</p></div>
     </div>
-    <div class="searchbox">
-      <input id="searchInput" placeholder="Search a place, e.g. Groningen, Assen, Leeuwarden" />
-      <button id="searchBtn">Search</button>
+    <div class="search-auth-row">
+      <div class="searchbox">
+        <input id="searchInput" placeholder="Search a place, e.g. Groningen, Assen, Leeuwarden" />
+        <button id="searchBtn">Search</button>
+      </div>
+      <div class="top-auth-actions">
+        <button id="topAuthBtn" type="button">Log in</button>
+        <button id="topRoutesBtn" type="button">Routes</button>
+      </div>
     </div>
   </div>
   <div id="status" class="status"></div>
@@ -70,6 +78,36 @@ app.innerHTML = `
       <div class="selectrow"><label>Area</label><select id="zoneSelect"></select></div>
       <div class="selectrow"><label>Ride window</label><select id="windowSelect"></select></div>
     </article>
+    <article id="routesCard" class="card routes-card">
+      <div class="routes-head">
+        <div>
+          <h3>GPX routes</h3>
+          <p id="routeAuthState">Log in to upload your own routes.</p>
+        </div>
+        <button id="routePanelCloseBtn" class="route-panel-close" type="button" aria-label="Close routes">×</button>
+      </div>
+      <div id="mobileRouteMenu" class="mobile-route-menu" hidden>
+        <button type="button" data-mobile-route-action="all">All routes</button>
+        <button type="button" data-mobile-route-action="mine">My routes</button>
+        <button type="button" data-mobile-route-action="upload">Upload GPX</button>
+      </div>
+      <form id="routeUploadForm" class="route-upload">
+        <div class="route-upload-grid">
+          <input id="routeTitleInput" name="title" placeholder="Route name" maxlength="80" />
+          <input id="routeCreatorInput" name="creator" placeholder="Made by" maxlength="60" />
+        </div>
+        <input id="routeDescriptionInput" name="description" placeholder="Short description, optional" maxlength="160" />
+        <div class="route-file-row">
+          <input id="routeFileInput" name="file" type="file" accept=".gpx,application/gpx+xml,text/xml,application/xml" />
+          <button id="routeUploadBtn" type="submit">Upload GPX</button>
+        </div>
+      </form>
+      <div class="route-tabs">
+        <button type="button" class="active" data-route-filter="all">All routes</button>
+        <button type="button" data-route-filter="mine">My routes</button>
+      </div>
+      <div id="routeList" class="route-list">Loading routes...</div>
+    </article>
     <article id="windows" class="card windows"></article>
   </section>
   <section class="bottompanel">
@@ -96,9 +134,28 @@ app.innerHTML = `
       </div>
     </article>
   </section>
+  <div id="authModal" class="auth-modal" hidden>
+    <div class="auth-modal-backdrop" data-auth-close="true"></div>
+    <section class="auth-dialog card">
+      <button id="authModalCloseBtn" class="auth-close" type="button" aria-label="Close login">×</button>
+      <h3>Account</h3>
+      <p class="auth-help">Log in, or create an account with the secret key.</p>
+      <div class="auth-mode-row">
+        <button id="authModeLoginBtn" type="button" class="active">Log in</button>
+        <button id="authModeSignupBtn" type="button">Create account</button>
+      </div>
+      <form id="customAuthForm" class="custom-auth-form">
+        <input id="authEmailInput" type="email" autocomplete="email" placeholder="Email" required />
+        <input id="authPasswordInput" type="password" autocomplete="current-password" placeholder="Password" required />
+        <input id="authSecretInput" type="password" autocomplete="off" placeholder="Secret key" hidden />
+        <button id="authSubmitBtn" type="submit">Log in</button>
+      </form>
+      <div id="authModalMessage" class="auth-message"></div>
+    </section>
+  </div>
 `;
 
-let map, markerLayer, heatLayer, pinLayer, selectedZone = ZONES[0], selectedWindow = 'day', selectedDayIndex = 0, expandedDayIndex = null;
+let map, markerLayer, heatLayer, pinLayer, routeLayer, selectedZone = ZONES[0], selectedWindow = 'day', selectedDayIndex = 0, expandedDayIndex = null;
 let forecast = null;
 let particles = [];
 let animationFrame = null;
@@ -108,6 +165,12 @@ let windWatchdogTimer = null;
 let mapResizeObserver = null;
 let mapResizeTimer = null;
 let activePin = null;
+let authUser = null;
+let routes = [];
+let routeFilter = 'all';
+let activeRoute = null;
+let routePanelOpen = false;
+let authModalMode = 'login';
 
 const els = {
   zoneSelect: document.querySelector('#zoneSelect'),
@@ -135,6 +198,30 @@ const els = {
   detailTitle: document.querySelector('#detailTitle'),
   searchInput: document.querySelector('#searchInput'),
   searchBtn: document.querySelector('#searchBtn'),
+  topAuthBtn: document.querySelector('#topAuthBtn'),
+  topRoutesBtn: document.querySelector('#topRoutesBtn'),
+  routesCard: document.querySelector('#routesCard'),
+  routePanelCloseBtn: document.querySelector('#routePanelCloseBtn'),
+  mobileRouteMenu: document.querySelector('#mobileRouteMenu'),
+  routeAuthState: document.querySelector('#routeAuthState'),
+  routeUploadForm: document.querySelector('#routeUploadForm'),
+  routeTitleInput: document.querySelector('#routeTitleInput'),
+  routeCreatorInput: document.querySelector('#routeCreatorInput'),
+  routeDescriptionInput: document.querySelector('#routeDescriptionInput'),
+  routeFileInput: document.querySelector('#routeFileInput'),
+  routeUploadBtn: document.querySelector('#routeUploadBtn'),
+  routeList: document.querySelector('#routeList'),
+  routeTabs: document.querySelector('.route-tabs'),
+  authModal: document.querySelector('#authModal'),
+  authModalCloseBtn: document.querySelector('#authModalCloseBtn'),
+  authModeLoginBtn: document.querySelector('#authModeLoginBtn'),
+  authModeSignupBtn: document.querySelector('#authModeSignupBtn'),
+  customAuthForm: document.querySelector('#customAuthForm'),
+  authEmailInput: document.querySelector('#authEmailInput'),
+  authPasswordInput: document.querySelector('#authPasswordInput'),
+  authSecretInput: document.querySelector('#authSecretInput'),
+  authSubmitBtn: document.querySelector('#authSubmitBtn'),
+  authModalMessage: document.querySelector('#authModalMessage'),
   canvas: null
 };
 
@@ -175,6 +262,8 @@ function centerMapOnSelectedPlace(delay = 0) {
 
 function init() {
   initControls();
+  initRouteControls();
+  initAuth();
   initMap();
   resizeCanvas();
   window.addEventListener('resize', () => scheduleMapRefresh(80));
@@ -184,6 +273,7 @@ function init() {
     if (!document.hidden && forecast) startWind(false);
   });
   loadForecast(selectedZone);
+  loadRoutes();
   centerMapOnSelectedPlace(450);
 }
 
@@ -201,6 +291,165 @@ function initControls() {
   els.backToCurrentBtn.addEventListener('click', backToCurrentConditions);
   els.searchBtn.addEventListener('click', searchPlace);
   els.searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') searchPlace(); });
+}
+
+function initRouteControls() {
+  els.topAuthBtn.addEventListener('click', handleTopAuthClick);
+  els.topRoutesBtn.addEventListener('click', () => setRoutePanelOpen(!routePanelOpen));
+  els.routePanelCloseBtn.addEventListener('click', () => setRoutePanelOpen(false));
+  els.routeUploadForm.addEventListener('submit', handleRouteUpload);
+  els.routeTabs.addEventListener('click', event => {
+    const btn = event.target.closest('[data-route-filter]');
+    if (!btn) return;
+    setRouteFilter(btn.dataset.routeFilter);
+  });
+  els.mobileRouteMenu.addEventListener('click', event => {
+    const btn = event.target.closest('[data-mobile-route-action]');
+    if (!btn) return;
+    const action = btn.dataset.mobileRouteAction;
+    setRoutePanelOpen(true);
+    if (action === 'all' || action === 'mine') setRouteFilter(action);
+    if (action === 'upload') {
+      if (!canUploadRoutes()) return showStatus('Create an account with the secret key before uploading GPX routes.', true);
+      setTimeout(() => els.routeTitleInput?.focus(), 120);
+    }
+  });
+  els.authModeLoginBtn.addEventListener('click', () => setAuthModalMode('login'));
+  els.authModeSignupBtn.addEventListener('click', () => setAuthModalMode('signup'));
+  els.authModalCloseBtn.addEventListener('click', closeAuthModal);
+  els.authModal.addEventListener('click', event => {
+    if (event.target?.dataset?.authClose) closeAuthModal();
+  });
+  els.customAuthForm.addEventListener('submit', handleCustomAuthSubmit);
+}
+
+function initAuth() {
+  if (!window.netlifyIdentity) {
+    authUser = null;
+    renderAuthState();
+    return;
+  }
+  window.netlifyIdentity.on('init', user => {
+    authUser = user;
+    renderAuthState();
+    renderRoutes();
+  });
+  window.netlifyIdentity.on('login', user => {
+    authUser = user;
+    window.netlifyIdentity.close();
+    renderAuthState();
+    loadRoutes();
+  });
+  window.netlifyIdentity.on('logout', () => {
+    authUser = null;
+    renderAuthState();
+    renderRoutes();
+  });
+  window.netlifyIdentity.init();
+}
+
+function renderAuthState() {
+  const hasIdentity = Boolean(window.netlifyIdentity);
+  const email = authUser?.email;
+  const verified = canUploadRoutes();
+  els.routeAuthState.textContent = email
+    ? verified ? `Logged in as ${email}` : `Logged in as ${email}. Uploads require the secret key account.`
+    : hasIdentity ? 'Log in to upload your own routes.' : 'Netlify Identity is not loaded yet.';
+  els.topAuthBtn.textContent = email ? isTouchMapDevice() ? 'Routes' : 'Log out' : 'Log in';
+  els.topAuthBtn.classList.toggle('logged-in', Boolean(email));
+  els.routeUploadBtn.disabled = !verified;
+  els.routeUploadForm.classList.toggle('disabled', !verified);
+  els.mobileRouteMenu.hidden = !(isTouchMapDevice() && email && routePanelOpen);
+}
+
+function canUploadRoutes() {
+  const meta = authUser?.user_metadata || authUser?.user_metadata || {};
+  return Boolean(authUser && (meta.routeAccessKey === SIGNUP_SECRET || meta.route_access_key === SIGNUP_SECRET || meta.routeAccess === true));
+}
+
+function handleTopAuthClick() {
+  if (authUser && isTouchMapDevice()) {
+    setRoutePanelOpen(!routePanelOpen);
+    return;
+  }
+  if (authUser) {
+    window.netlifyIdentity?.logout?.();
+    return;
+  }
+  openAuthModal('login');
+}
+
+function openAuthModal(mode = 'login') {
+  setAuthModalMode(mode);
+  els.authModal.hidden = false;
+  els.authModalMessage.textContent = '';
+  setTimeout(() => els.authEmailInput?.focus(), 40);
+}
+
+function closeAuthModal() {
+  els.authModal.hidden = true;
+  els.authModalMessage.textContent = '';
+  els.customAuthForm.reset();
+}
+
+function setAuthModalMode(mode) {
+  authModalMode = mode === 'signup' ? 'signup' : 'login';
+  els.authModeLoginBtn.classList.toggle('active', authModalMode === 'login');
+  els.authModeSignupBtn.classList.toggle('active', authModalMode === 'signup');
+  els.authSecretInput.hidden = authModalMode !== 'signup';
+  els.authSecretInput.required = authModalMode === 'signup';
+  els.authPasswordInput.autocomplete = authModalMode === 'signup' ? 'new-password' : 'current-password';
+  els.authSubmitBtn.textContent = authModalMode === 'signup' ? 'Create account' : 'Log in';
+}
+
+async function handleCustomAuthSubmit(event) {
+  event.preventDefault();
+  if (!window.netlifyIdentity?.gotrue) {
+    els.authModalMessage.textContent = 'Netlify Identity is not ready yet.';
+    return;
+  }
+  const email = els.authEmailInput.value.trim();
+  const password = els.authPasswordInput.value;
+  const secret = els.authSecretInput.value.trim();
+  els.authSubmitBtn.disabled = true;
+  els.authModalMessage.textContent = authModalMode === 'signup' ? 'Creating account...' : 'Logging in...';
+  try {
+    if (authModalMode === 'signup') {
+      if (secret !== SIGNUP_SECRET) throw new Error('Wrong secret key.');
+      await window.netlifyIdentity.gotrue.signup(email, password, { routeAccessKey: SIGNUP_SECRET });
+      els.authModalMessage.textContent = 'Account created. Check your email if confirmation is enabled, then log in.';
+      setAuthModalMode('login');
+      els.authPasswordInput.value = '';
+      els.authSecretInput.value = '';
+    } else {
+      const user = await window.netlifyIdentity.gotrue.login(email, password, true);
+      authUser = user;
+      renderAuthState();
+      loadRoutes();
+      closeAuthModal();
+      showStatus('Logged in.');
+      setTimeout(hideStatus, 1200);
+    }
+  } catch (err) {
+    console.error(err);
+    els.authModalMessage.textContent = err?.json?.msg || err?.message || 'Authentication failed.';
+  } finally {
+    els.authSubmitBtn.disabled = false;
+  }
+}
+
+function setRoutePanelOpen(open) {
+  routePanelOpen = Boolean(open);
+  els.routesCard.classList.toggle('open', routePanelOpen);
+  els.topRoutesBtn.classList.toggle('active', routePanelOpen);
+  els.mobileRouteMenu.hidden = !(isTouchMapDevice() && authUser && routePanelOpen);
+  if (routePanelOpen) loadRoutes();
+}
+
+function setRouteFilter(filter) {
+  routeFilter = filter === 'mine' ? 'mine' : 'all';
+  [...els.routeTabs.querySelectorAll('[data-route-filter]')].forEach(tab => tab.classList.toggle('active', tab.dataset.routeFilter === routeFilter));
+  renderRoutes();
 }
 
 function initMap() {
@@ -246,9 +495,13 @@ function initMap() {
   });
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
+  map.createPane('routePane');
+  map.getPane('routePane').style.zIndex = 640;
+  map.getPane('routePane').style.pointerEvents = 'none';
   markerLayer = L.layerGroup().addTo(map);
   heatLayer = L.layerGroup().addTo(map);
   pinLayer = L.layerGroup().addTo(map);
+  routeLayer = L.layerGroup().addTo(map);
 
   // Do not attach custom touchmove/gesture handlers here.
   // CSS touch-action keeps the browser from page-zooming, while Leaflet receives the full gesture
@@ -450,7 +703,9 @@ function renderAll() {
   renderPredictionNotice();
   drawWeatherOverlay();
   refreshActivePin();
+  renderRoutes();
 }
+
 
 function renderHero() {
   const current = getCurrentConditionsSummary();
@@ -658,6 +913,248 @@ function pinIcon(text) {
     iconSize: [74, 38],
     iconAnchor: [37, 38]
   });
+}
+
+async function loadRoutes() {
+  try {
+    const data = await fetchJson('/.netlify/functions/routes-list');
+    routes = Array.isArray(data.routes) ? data.routes : [];
+    renderRoutes();
+  } catch (err) {
+    console.error(err);
+    els.routeList.textContent = 'Could not load routes yet. Deploy with Netlify Functions to enable this.';
+  }
+}
+
+async function handleRouteUpload(event) {
+  event.preventDefault();
+  const file = els.routeFileInput.files?.[0];
+  if (!canUploadRoutes()) return showStatus('Create an account with the secret key before uploading GPX routes.', true);
+  if (!file) return showStatus('Choose a .gpx file first.', true);
+  if (!file.name.toLowerCase().endsWith('.gpx')) return showStatus('Only .gpx files are supported.', true);
+  if (file.size > 4 * 1024 * 1024) return showStatus('This GPX file is too large. Keep it below 4 MB.', true);
+
+  showStatus('Reading GPX route...');
+  try {
+    const gpx = await file.text();
+    const parsed = parseGpx(gpx);
+    if (!parsed.points.length) return showStatus('No route points found in this GPX file.', true);
+    const title = els.routeTitleInput.value.trim() || parsed.name || file.name.replace(/\.gpx$/i, '');
+    const creatorName = els.routeCreatorInput.value.trim() || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Unknown rider';
+    const description = els.routeDescriptionInput.value.trim();
+    const token = await getIdentityToken();
+
+    const res = await fetch('/.netlify/functions/routes-upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        title,
+        creatorName,
+        description,
+        gpx,
+        distanceKm: parsed.distanceKm,
+        startLat: parsed.start?.[0],
+        startLon: parsed.start?.[1],
+        endLat: parsed.end?.[0],
+        endLon: parsed.end?.[1],
+        bounds: parsed.bounds,
+        pointCount: parsed.points.length
+      })
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data?.error || 'Upload failed');
+    els.routeUploadForm.reset();
+    showStatus('Route uploaded.');
+    setTimeout(hideStatus, 1200);
+    await loadRoutes();
+    if (data.route?.id) await showRoute(data.route.id);
+  } catch (err) {
+    console.error(err);
+    showStatus(err.message || 'Could not upload this route.', true);
+  }
+}
+
+async function showRoute(id) {
+  const route = routes.find(r => r.id === id);
+  showStatus(route ? `Loading ${route.title}...` : 'Loading route...');
+  try {
+    const data = await fetchJson(`/.netlify/functions/routes-get?id=${encodeURIComponent(id)}`);
+    const parsed = parseGpx(data.gpx);
+    if (!parsed.points.length) throw new Error('This route has no points.');
+    activeRoute = { ...(route || data.route), points: parsed.points };
+    drawRoute(parsed.points);
+    renderRoutes();
+    if (isTouchMapDevice()) setRoutePanelOpen(false);
+    showStatus(route ? `${route.title} shown on the map.` : 'Route shown on the map.');
+    setTimeout(hideStatus, 1200);
+  } catch (err) {
+    console.error(err);
+    showStatus(err.message || 'Could not load this route.', true);
+  }
+}
+
+async function deleteRoute(id) {
+  const route = routes.find(r => r.id === id);
+  if (!route) return showStatus('Route not found.', true);
+  if (!authUser || route.ownerId !== (authUser.id || authUser.sub)) return showStatus('You can only delete your own uploaded routes.', true);
+  const confirmed = window.confirm(`Delete "${route.title || 'this route'}"? This cannot be undone.`);
+  if (!confirmed) return;
+
+  showStatus('Deleting route...');
+  try {
+    const token = await getIdentityToken();
+    const res = await fetch('/.netlify/functions/routes-delete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ id })
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data?.error || 'Delete failed');
+    if (activeRoute?.id === id) clearRoute();
+    routes = routes.filter(r => r.id !== id);
+    renderRoutes();
+    showStatus('Route deleted.');
+    setTimeout(hideStatus, 1200);
+  } catch (err) {
+    console.error(err);
+    showStatus(err.message || 'Could not delete this route.', true);
+  }
+}
+
+function drawRoute(points) {
+  if (!routeLayer || !map) return;
+  routeLayer.clearLayers();
+  const line = L.polyline(points, {
+    color: '#ffb21a',
+    weight: 5,
+    opacity: 0.92,
+    lineJoin: 'round',
+    lineCap: 'round',
+    interactive: false,
+    pane: 'routePane'
+  }).addTo(routeLayer);
+  const outline = L.polyline(points, {
+    color: '#071018',
+    weight: 8,
+    opacity: 0.55,
+    lineJoin: 'round',
+    lineCap: 'round',
+    interactive: false,
+    pane: 'routePane'
+  }).addTo(routeLayer);
+  outline.bringToBack();
+  line.bringToFront();
+  map.fitBounds(line.getBounds(), { padding: [36, 36], animate: false, maxZoom: isTouchMapDevice() ? 12 : 13 });
+  scheduleMapRefresh(120);
+  startWind(false);
+}
+
+function clearRoute() {
+  activeRoute = null;
+  routeLayer?.clearLayers();
+  renderRoutes();
+}
+
+function renderRoutes() {
+  if (!els.routeList) return;
+  const filtered = routeFilter === 'mine'
+    ? routes.filter(route => authUser && route.ownerId === (authUser.id || authUser.sub))
+    : routes;
+  if (!filtered.length) {
+    els.routeList.innerHTML = `<div class="route-empty">${routeFilter === 'mine' ? 'You have not uploaded any routes yet.' : 'No GPX routes uploaded yet.'}</div>`;
+    return;
+  }
+  els.routeList.innerHTML = filtered.map(route => {
+    const selected = activeRoute?.id === route.id;
+    const owned = authUser && route.ownerId === (authUser.id || authUser.sub);
+    const weather = routeWeatherSummary(route);
+    return `<article class="route-item ${selected ? 'selected' : ''}">
+      <button type="button" class="route-view-btn" data-route-id="${escapeHtml(route.id)}" aria-label="Show ${escapeHtml(route.title || 'route')} on the map">
+        <div class="route-title-row"><strong>${escapeHtml(route.title || 'Untitled route')}</strong><span>${formatKm(route.distanceKm)}</span></div>
+        <div class="route-meta">Made by ${escapeHtml(route.creatorName || 'Unknown')} · ${formatRouteDate(route.createdAt)}</div>
+        ${route.description ? `<div class="route-description">${escapeHtml(route.description)}</div>` : ''}
+        <div class="route-weather">${weather}</div>
+      </button>
+      ${owned ? `<button type="button" class="route-delete-btn" data-route-delete-id="${escapeHtml(route.id)}" aria-label="Delete ${escapeHtml(route.title || 'route')}">Delete</button>` : ''}
+    </article>`;
+  }).join('');
+  els.routeList.querySelectorAll('[data-route-id]').forEach(btn => btn.addEventListener('click', () => showRoute(btn.dataset.routeId)));
+  els.routeList.querySelectorAll('[data-route-delete-id]').forEach(btn => btn.addEventListener('click', event => {
+    event.stopPropagation();
+    deleteRoute(btn.dataset.routeDeleteId);
+  }));
+}
+
+function routeWeatherSummary(route) {
+  const distance = Number(route?.distanceFromSelectedKm);
+  const selected = getSelectedForecastSummary();
+  if (!selected?.summary) return 'Weather loading...';
+  const s = selected.summary;
+  return `${Math.round(s.wind)} km/h wind · ${Math.round(s.rainProb)}% rain · ${Math.round(s.temp)}°C`;
+}
+
+function parseGpx(gpxText) {
+  const xml = new DOMParser().parseFromString(gpxText, 'application/xml');
+  const parserError = xml.querySelector('parsererror');
+  if (parserError) throw new Error('This GPX file is not valid XML.');
+  const name = xml.querySelector('trk > name, rte > name, metadata > name')?.textContent?.trim() || '';
+  const nodes = [...xml.querySelectorAll('trkpt, rtept')];
+  const points = nodes.map(node => [Number(node.getAttribute('lat')), Number(node.getAttribute('lon'))])
+    .filter(([lat, lon]) => Number.isFinite(lat) && Number.isFinite(lon));
+  let distanceKm = 0;
+  for (let i = 1; i < points.length; i += 1) distanceKm += distanceBetweenKm(points[i - 1], points[i]);
+  const bounds = points.length ? makeBounds(points) : null;
+  return { name, points, distanceKm, start: points[0] || null, end: points[points.length - 1] || null, bounds };
+}
+
+function makeBounds(points) {
+  const lats = points.map(p => p[0]);
+  const lons = points.map(p => p[1]);
+  return [[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]];
+}
+
+function distanceBetweenKm(a, b) {
+  const toRad = deg => deg * Math.PI / 180;
+  const r = 6371;
+  const dLat = toRad(b[0] - a[0]);
+  const dLon = toRad(b[1] - a[1]);
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * r * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+async function getIdentityToken() {
+  const user = window.netlifyIdentity?.currentUser?.() || authUser;
+  if (!user) return '';
+  if (typeof user.jwt === 'function') return user.jwt();
+  return user.token?.access_token || user.token?.accessToken || '';
+}
+
+async function safeJson(res) {
+  try { return await res.json(); } catch { return null; }
+}
+
+function formatKm(value) {
+  const km = n(value);
+  if (km <= 0) return '-- km';
+  return `${km.toFixed(km < 10 ? 1 : 0)} km`;
+}
+
+function formatRouteDate(value) {
+  const d = value ? new Date(value) : null;
+  if (!d || Number.isNaN(d.getTime())) return 'just now';
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' }).format(d);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
 }
 
 function renderError() {
