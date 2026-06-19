@@ -8,9 +8,10 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
 
 const MAX_GPX_BYTES = 4 * 1024 * 1024;
 
-function hasRouteAccess(user) {
+function hasRouteAccess(user, req) {
   const meta = user?.user_metadata || user?.user_metadata || {};
-  return meta.routeAccessKey === 'Mannenavond' || meta.route_access_key === 'Mannenavond' || meta.routeAccess === true;
+  const headerKey = req.headers.get('x-route-access-key') || req.headers.get('X-Route-Access-Key');
+  return meta.routeAccessKey === 'Mannenavond' || meta.route_access_key === 'Mannenavond' || meta.routeAccess === true || headerKey === 'Mannenavond';
 }
 
 
@@ -31,7 +32,7 @@ export default async (req, context) => {
 
   const user = await resolveUser(req, context);
   if (!user) return json({ error: 'Log in before uploading routes' }, 401);
-  if (!hasRouteAccess(user)) return json({ error: 'This account is not allowed to upload routes. Create an account with the secret key.' }, 403);
+  if (!hasRouteAccess(user, req)) return json({ error: 'This account is not allowed to upload routes. Enter the Mannenavond secret key first.' }, 403);
 
   try {
     const body = await req.json();

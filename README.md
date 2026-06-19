@@ -15,7 +15,7 @@ The live site is intended for `fietsen.daanheijnen.nl`.
 - Animated wind particles that keep running over the map
 - Clickable map pin that shows wind speed and gusts for that exact point
 - Forecast-day mode with a button to return to current conditions
-- Temperature, humidity, UV and hooikoorts/pollen values per forecast day
+- Temperature, humidity, UV and pollen values per forecast day
 - Confidence score that takes rain, wind, gusts, temperature, humidity, UV and pollen into account
 - GPX route upload, browsing, display, download and delete
 - Netlify Identity login with a secret signup key
@@ -42,7 +42,7 @@ wind_gusts_10m
 weather_code
 ```
 
-Pollen data is loaded from the Open-Meteo Air Quality API and is shown as a hooikoorts value. The app combines several pollen types into one simple risk label:
+Pollen data is loaded from the Open-Meteo Air Quality API and is shown as a pollen value. The app combines several pollen types into one simple risk label:
 
 ```txt
 alder_pollen
@@ -200,6 +200,6 @@ This is not meant to be a social network. The route feature is intentionally sim
 - Wind particles are darker and more visible on the lighter cycling-style map.
 
 
-## Hooikoorts / pollen
+## Pollen
 
-The app uses the Open-Meteo Air Quality API pollen forecast for alder, birch, grass, mugwort, olive and ragweed. Pollen is shown as a hay fever risk level, not just a raw total. The risk is based on the dominant pollen type, so grass pollen in June is treated more sensitively than a simple total count. If pollen data is outside the available pollen forecast horizon, the app shows `Unknown` instead of incorrectly showing `Low`.
+The app uses the Open-Meteo Air Quality API pollen forecast for alder, birch, grass, mugwort, olive and ragweed. Pollen is shown as a simple pollen risk level, not just a raw total. The risk is based on the dominant pollen type, so grass pollen in June is treated more sensitively than a simple total count. If pollen data is outside the available pollen forecast horizon, the app shows `--` instead of incorrectly showing `Low`.
