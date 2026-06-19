@@ -191,3 +191,15 @@ README.md
 ## Notes
 
 This is not meant to be a social network. The route feature is intentionally simple: users log in, upload GPX files, browse shared routes, download routes and choose a ride based on the current and predicted weather conditions.
+
+
+## Latest map and route updates
+
+- Selected GPX routes can now be hidden again with the **Hide route** button.
+- The map uses a faster OpenStreetMap tile layer at high zoom levels to reduce blank/slow loading tiles.
+- Wind particles are darker and more visible on the lighter cycling-style map.
+
+
+## Hooikoorts / pollen
+
+The app uses the Open-Meteo Air Quality API pollen forecast for alder, birch, grass, mugwort, olive and ragweed. Pollen is shown as a hay fever risk level, not just a raw total. The risk is based on the dominant pollen type, so grass pollen in June is treated more sensitively than a simple total count. If pollen data is outside the available pollen forecast horizon, the app shows `Unknown` instead of incorrectly showing `Low`.

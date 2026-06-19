@@ -37,6 +37,7 @@ const POLLEN_VARIABLES = [
   'birch_pollen',
   'grass_pollen',
   'mugwort_pollen',
+  'olive_pollen',
   'ragweed_pollen'
 ].join(',');
 
@@ -93,7 +94,10 @@ app.innerHTML = `
           <h3>GPX routes</h3>
           <p id="routeAuthState">Log in to upload your own routes.</p>
         </div>
-        <button id="routePanelCloseBtn" class="route-panel-close" type="button" aria-label="Close routes">×</button>
+        <div class="route-head-actions">
+          <button id="clearRouteBtn" class="route-clear-btn" type="button" hidden>Hide route</button>
+          <button id="routePanelCloseBtn" class="route-panel-close" type="button" aria-label="Close routes">×</button>
+        </div>
       </div>
       <div id="mobileRouteMenu" class="mobile-route-menu" hidden>
         <button type="button" data-mobile-route-action="all">All routes</button>
@@ -214,6 +218,7 @@ const els = {
   topRoutesBtn: document.querySelector('#topRoutesBtn'),
   routesCard: document.querySelector('#routesCard'),
   routePanelCloseBtn: document.querySelector('#routePanelCloseBtn'),
+  clearRouteBtn: document.querySelector('#clearRouteBtn'),
   mobileRouteMenu: document.querySelector('#mobileRouteMenu'),
   routeAuthState: document.querySelector('#routeAuthState'),
   routeUploadForm: document.querySelector('#routeUploadForm'),
@@ -309,6 +314,11 @@ function initRouteControls() {
   els.topAuthBtn.addEventListener('click', handleTopAuthClick);
   els.topRoutesBtn.addEventListener('click', () => setRoutePanelOpen(!routePanelOpen));
   els.routePanelCloseBtn.addEventListener('click', () => setRoutePanelOpen(false));
+  els.clearRouteBtn.addEventListener('click', () => {
+    clearRoute();
+    showStatus('Route hidden.');
+    setTimeout(hideStatus, 1100);
+  });
   els.routeUploadForm.addEventListener('submit', handleRouteUpload);
   els.routeTabs.addEventListener('click', event => {
     const btn = event.target.closest('[data-route-filter]');
@@ -473,7 +483,7 @@ function initMap() {
   map = L.map('map', {
     zoomControl: false,
     minZoom: 7,
-    maxZoom: 20,
+    maxZoom: 21,
     preferCanvas: true,
     worldCopyJump: false,
     touchZoom: true,
@@ -485,29 +495,19 @@ function initMap() {
     inertia: false
   }).setView([53.13, 5.65], 8);
 
-  // Use CyclOSM because it renders cycling paths, cycle tracks and bicycle route details.
-  // It supports deeper zoom than the previous map layer, with an OSM fallback if a tile fails.
-  const baseTiles = L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
-    subdomains: ['a', 'b', 'c'],
-    maxZoom: 20,
-    attribution: '&copy; OpenStreetMap contributors | Tiles: CyclOSM | Weather data by Open-Meteo',
+  // Use the standard OpenStreetMap tile service for faster high-zoom loading.
+  // It still contains mapped cycle paths and avoids the slow/blank CyclOSM tiles at deep zoom levels.
+  const baseTiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 21,
+    maxNativeZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors | Weather data by Open-Meteo',
     crossOrigin: false,
     updateWhenIdle: true,
     updateWhenZooming: false,
-    keepBuffer: 4,
+    keepBuffer: 2,
     tileSize: 256,
     className: 'base-map-tile cycling-map-tile'
   }).addTo(map);
-
-  baseTiles.on('tileerror', event => {
-    const img = event.tile;
-    if (!img.dataset.fallback) {
-      img.dataset.fallback = '1';
-      img.src = img.src
-        .replace(/https:\/\/[abc]\.tile-cyclosm\.openstreetmap\.fr\/cyclosm/, 'https://tile.openstreetmap.org')
-        .replace('https://tile-cyclosm.openstreetmap.fr/cyclosm', 'https://tile.openstreetmap.org');
-    }
-  });
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   map.createPane('routePane');
@@ -624,7 +624,9 @@ async function getForecast(lat, lon) {
   url.searchParams.set('longitude', lon);
   url.searchParams.set('hourly', API_VARIABLES);
   url.searchParams.set('daily', 'sunrise,sunset,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max');
-  url.searchParams.set('forecast_days', '10');
+  // Open-Meteo Air Quality accepts up to 7 forecast days, and pollen is often shorter.
+  // Asking for 10 days made the endpoint fail, which made the app fall back to Low.
+  url.searchParams.set('forecast_days', '7');
   url.searchParams.set('timezone', 'Europe/Amsterdam');
   url.searchParams.set('wind_speed_unit', 'kmh');
   url.searchParams.set('precipitation_unit', 'mm');
@@ -647,7 +649,9 @@ async function getPollenForecast(lat, lon) {
   url.searchParams.set('latitude', lat);
   url.searchParams.set('longitude', lon);
   url.searchParams.set('hourly', POLLEN_VARIABLES);
-  url.searchParams.set('forecast_days', '10');
+  // Open-Meteo Air Quality accepts up to 7 forecast days, and pollen is often shorter.
+  // Asking for 10 days made the endpoint fail, which made the app fall back to Low.
+  url.searchParams.set('forecast_days', '7');
   url.searchParams.set('timezone', 'Europe/Amsterdam');
   const data = await fetchJson(url.toString());
   writeCache(key, data);
@@ -658,21 +662,21 @@ function transformForecast(data, zone, pollenData = null) {
   const h = data.hourly;
   const pollenByTime = new Map((pollenData?.hourly?.time || []).map((time, i) => {
     const ph = pollenData.hourly;
-    const values = [
-      n(ph.alder_pollen?.[i]),
-      n(ph.birch_pollen?.[i]),
-      n(ph.grass_pollen?.[i]),
-      n(ph.mugwort_pollen?.[i]),
-      n(ph.ragweed_pollen?.[i])
-    ];
+    const values = {
+      alder: finiteOrNull(ph.alder_pollen?.[i]),
+      birch: finiteOrNull(ph.birch_pollen?.[i]),
+      grass: finiteOrNull(ph.grass_pollen?.[i]),
+      mugwort: finiteOrNull(ph.mugwort_pollen?.[i]),
+      olive: finiteOrNull(ph.olive_pollen?.[i]),
+      ragweed: finiteOrNull(ph.ragweed_pollen?.[i])
+    };
+    const scoreInfo = pollenScore(values);
     return [time, {
-      alder: values[0],
-      birch: values[1],
-      grass: values[2],
-      mugwort: values[3],
-      ragweed: values[4],
-      total: sum(values),
-      max: Math.max(...values)
+      ...values,
+      total: scoreInfo.hasData ? sum(Object.values(values).filter(v => v !== null)) : null,
+      max: scoreInfo.hasData ? Math.max(...Object.values(values).filter(v => v !== null)) : null,
+      score: scoreInfo.score,
+      dominant: scoreInfo.dominant
     }];
   }));
   const rows = h.time.map((time, i) => ({
@@ -681,8 +685,10 @@ function transformForecast(data, zone, pollenData = null) {
     temp: n(h.temperature_2m?.[i]),
     humidity: n(h.relative_humidity_2m?.[i]),
     uv: n(h.uv_index?.[i]),
-    pollen: pollenByTime.get(time)?.total ?? 0,
-    pollenPeak: pollenByTime.get(time)?.max ?? 0,
+    pollen: pollenByTime.get(time)?.score ?? null,
+    pollenTotal: pollenByTime.get(time)?.total ?? null,
+    pollenPeak: pollenByTime.get(time)?.max ?? null,
+    pollenDominant: pollenByTime.get(time)?.dominant ?? null,
     rainProb: n(h.precipitation_probability?.[i]),
     precip: n(h.precipitation?.[i]),
     rain: n(h.rain?.[i]) + n(h.showers?.[i]),
@@ -725,13 +731,16 @@ function summarizeWindow(items, dayIndex, id) {
   const temp = avg(items.map(i => i.temp));
   const humidity = avg(items.map(i => i.humidity));
   const uv = Math.max(...items.map(i => i.uv));
-  const pollen = Math.max(...items.map(i => i.pollen));
-  const pollenPeak = Math.max(...items.map(i => i.pollenPeak));
+  const pollenValues = items.map(i => i.pollen).filter(isFiniteNumber);
+  const pollen = pollenValues.length ? Math.max(...pollenValues) : null;
+  const pollenPeakValues = items.map(i => i.pollenPeak).filter(isFiniteNumber);
+  const pollenPeak = pollenPeakValues.length ? Math.max(...pollenPeakValues) : null;
+  const pollenDominant = dominantPollenType(items);
   const clouds = avg(items.map(i => i.clouds));
   const score = cyclingScore({ rainProb, rainAmount, wind, gust, dayIndex });
   const confidence = confidenceScore({ rainProb, rainAmount, wind, gust, temp, humidity, uv, pollen, dayIndex, items });
   const grade = score >= 74 ? 'good' : score >= 48 ? 'maybe' : 'bad';
-  return { id, rainProb, rainAmount, wind, gust, dir, temp, humidity, uv, pollen, pollenPeak, clouds, score, confidence, grade };
+  return { id, rainProb, rainAmount, wind, gust, dir, temp, humidity, uv, pollen, pollenPeak, pollenDominant, clouds, score, confidence, grade };
 }
 
 function cyclingScore({ rainProb, rainAmount, wind, gust, dayIndex }) {
@@ -750,7 +759,8 @@ function confidenceScore({ rainProb, rainAmount, wind, gust, temp, humidity, uv,
   const tempVolatility = stdev(items.map(i => i.temp)) * 0.9;
   const humidityVolatility = stdev(items.map(i => i.humidity)) / 6;
   const uvVolatility = stdev(items.map(i => i.uv)) * 1.2;
-  const pollenVolatility = stdev(items.map(i => i.pollen)) / 18;
+  const pollenValues = items.map(i => i.pollen).filter(isFiniteNumber);
+  const pollenVolatility = pollenValues.length ? stdev(pollenValues) / 18 : 0;
   const horizonPenalty = dayIndex * 5.5;
   const edgePenalty = rainProb > 30 && rainProb < 65 ? 10 : 0;
   const gustPenalty = gust > 45 ? 8 : 0;
@@ -781,13 +791,13 @@ function renderHero() {
   const h = current.hour;
   const s = current.summary;
   els.heroTitle.textContent = `Now in ${forecast.zone.name}`;
-  els.heroSub.textContent = `${Math.round(h.temp)}°C · ${weatherDescription(h.code)} · ${Math.round(h.rainProb)}% rain risk · ${formatPollen(h.pollen)} hooikoorts.`;
+  els.heroSub.textContent = `${Math.round(h.temp)}°C · ${weatherDescription(h.code)} · ${Math.round(h.rainProb)}% rain risk · ${formatPollen(h.pollen, h.pollenDominant)} hooikoorts.`;
   els.scoreBubble.style.setProperty('--score', s.score);
   els.scoreBubble.querySelector('span').textContent = s.score;
   els.mRain.textContent = `${Math.round(h.rainProb)}% / ${formatRainMm(Math.max(h.precip, h.rain), h.rainProb)}`;
   els.mWind.textContent = `${Math.round(h.wind)} km/h`;
   els.mGust.textContent = `${Math.round(h.gust)} km/h`;
-  els.mPollen.textContent = formatPollen(h.pollen);
+  els.mPollen.textContent = formatPollen(h.pollen, h.pollenDominant);
   els.mConfidence.textContent = `${s.confidence}%`;
   els.routeTip.textContent = routeTip(h.dir, h.wind, h.gust);
 }
@@ -807,7 +817,7 @@ function renderWindows() {
             <span>${Math.round(s.temp)}°C</span>
             <span>${Math.round(s.humidity)}% humidity</span>
             <span>UV ${formatUv(s.uv)}</span>
-            <span>Hooikoorts ${formatPollen(s.pollen)}</span>
+            <span>Hooikoorts ${formatPollen(s.pollen, s.pollenDominant)}</span>
           </div>
         </div>
         <div class="grade ${cl}">${s.grade.toUpperCase()}</div>
@@ -854,7 +864,7 @@ function renderDetail() {
   els.dTemp.textContent = `${Math.round(s.temp)}°C`;
   els.dHumidity.textContent = `${Math.round(s.humidity)}%`;
   els.dUv.textContent = formatUv(s.uv);
-  els.dPollen.textContent = formatPollen(s.pollen);
+  els.dPollen.textContent = formatPollen(s.pollen, s.pollenDominant);
 }
 
 function renderPredictionNotice() {
@@ -1060,6 +1070,7 @@ async function showRoute(id) {
     if (!parsed.points.length) throw new Error('This route has no points.');
     activeRoute = { ...(route || data.route), points: parsed.points };
     drawRoute(parsed.points);
+    if (els.clearRouteBtn) els.clearRouteBtn.hidden = false;
     renderRoutes();
     if (isTouchMapDevice()) setRoutePanelOpen(false);
     showStatus(route ? `${route.title} shown on the map.` : 'Route shown on the map.');
@@ -1132,6 +1143,7 @@ function drawRoute(points) {
 function clearRoute() {
   activeRoute = null;
   routeLayer?.clearLayers();
+  if (els.clearRouteBtn) els.clearRouteBtn.hidden = true;
   renderRoutes();
 }
 
@@ -1200,7 +1212,7 @@ function routeWeatherSummary(route) {
   const selected = getSelectedForecastSummary();
   if (!selected?.summary) return 'Weather loading...';
   const s = selected.summary;
-  return `${Math.round(s.wind)} km/h wind · ${Math.round(s.rainProb)}% rain · ${Math.round(s.temp)}°C · ${formatPollen(s.pollen)} hooikoorts`;
+  return `${Math.round(s.wind)} km/h wind · ${Math.round(s.rainProb)}% rain · ${Math.round(s.temp)}°C · ${formatPollen(s.pollen, s.pollenDominant)} hooikoorts`;
 }
 
 function parseGpx(gpxText) {
@@ -1465,7 +1477,7 @@ function animateWind(now = performance.now()) {
   const vx = Math.sin(rad) * speed;
   const vy = -Math.cos(rad) * speed;
 
-  ctx.lineWidth = clamp(0.75 + gustKmh / 150, 0.85, 1.65);
+  const windLineWidth = clamp(0.95 + gustKmh / 130, 1.05, 2.1);
   ctx.lineCap = 'round';
 
   // Keep the field evenly populated. Without this, long-lived particles can
@@ -1495,7 +1507,9 @@ function animateWind(now = performance.now()) {
     const fadeOut = clamp((p.life - p.age) / 32, 0, 1);
     const alpha = clamp(alphaBase * fadeIn * fadeOut, 0.04, 0.55);
 
-    ctx.strokeStyle = `rgba(226, 246, 255, ${alpha})`;
+    // Darker particles are much more visible on the new light cycling map.
+    ctx.lineWidth = windLineWidth;
+    ctx.strokeStyle = `rgba(7, 31, 48, ${clamp(alpha * 1.35, 0.08, 0.78)})`;
     ctx.beginPath();
     ctx.moveTo(prevX - Math.sin(rad) * tail * 0.25, prevY + Math.cos(rad) * tail * 0.25);
     ctx.lineTo(p.x, p.y);
@@ -1549,19 +1563,54 @@ function formatUv(value) {
   if (uv <= 0) return '0';
   return uv < 10 ? uv.toFixed(1).replace(/\.0$/, '') : Math.round(uv).toString();
 }
+function pollenScore(values) {
+  const thresholds = {
+    alder: [10, 30, 50],
+    birch: [10, 50, 100],
+    grass: [5, 20, 50],
+    mugwort: [5, 20, 50],
+    olive: [10, 50, 100],
+    ragweed: [3, 10, 30]
+  };
+  let best = { score: null, dominant: null, hasData: false };
+  Object.entries(values || {}).forEach(([type, value]) => {
+    if (!isFiniteNumber(value)) return;
+    best.hasData = true;
+    const [low, moderate, high] = thresholds[type] || [10, 50, 100];
+    let score;
+    if (value <= 0) score = 0;
+    else if (value < low) score = (value / low) * 24;
+    else if (value < moderate) score = 25 + ((value - low) / (moderate - low)) * 24;
+    else if (value < high) score = 50 + ((value - moderate) / (high - moderate)) * 24;
+    else score = clamp(75 + ((value - high) / high) * 25, 75, 100);
+    if (best.score === null || score > best.score) best = { score, dominant: type, hasData: true };
+  });
+  return best;
+}
 function pollenRiskLevel(value) {
+  if (!isFiniteNumber(value)) return { label: 'Unknown', penalty: 0 };
   const p = n(value);
-  if (p <= 0) return { label: 'Low', penalty: 0 };
-  if (p < 10) return { label: 'Low', penalty: 1 };
-  if (p < 50) return { label: 'Moderate', penalty: 4 };
-  if (p < 100) return { label: 'High', penalty: 7 };
+  if (p < 25) return { label: 'Low', penalty: 0 };
+  if (p < 50) return { label: 'Moderate', penalty: 3 };
+  if (p < 75) return { label: 'High', penalty: 7 };
   return { label: 'Very high', penalty: 10 };
 }
-function formatPollen(value) {
-  const p = n(value);
-  const level = pollenRiskLevel(p).label;
-  if (p <= 0) return 'Low';
-  return `${level} (${Math.round(p)})`;
+function formatPollen(value, dominant = null) {
+  if (!isFiniteNumber(value)) return 'Unknown';
+  const level = pollenRiskLevel(value).label;
+  const type = dominant ? ` ${pollenTypeLabel(dominant)}` : '';
+  return `${level}${type}`;
+}
+function pollenTypeLabel(type) {
+  const labels = { alder: 'alder', birch: 'birch', grass: 'grass', mugwort: 'mugwort', olive: 'olive', ragweed: 'ragweed' };
+  return labels[type] || type;
+}
+function dominantPollenType(items) {
+  let best = { score: -1, dominant: null };
+  items.forEach(item => {
+    if (isFiniteNumber(item.pollen) && item.pollen > best.score) best = { score: item.pollen, dominant: item.pollenDominant || null };
+  });
+  return best.dominant;
 }
 function slugifyFilename(value) {
   return String(value || 'route')
@@ -1571,6 +1620,8 @@ function slugifyFilename(value) {
     .replace(/^-+|-+$/g, '')
     .slice(0, 80) || 'route';
 }
+function isFiniteNumber(x) { return Number.isFinite(Number(x)); }
+function finiteOrNull(x) { return isFiniteNumber(x) ? Number(x) : null; }
 function n(x) { return Number.isFinite(Number(x)) ? Number(x) : 0; }
 function avg(arr) { return arr.length ? sum(arr) / arr.length : 0; }
 function sum(arr) { return arr.reduce((a, b) => a + n(b), 0); }
