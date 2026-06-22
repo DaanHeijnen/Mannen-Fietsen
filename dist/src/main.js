@@ -400,6 +400,16 @@ function canUploadRoutes() {
   return Boolean(authUser);
 }
 
+function currentUserKeys() {
+  if (!authUser) return [];
+  return [authUser.id, authUser.sub, authUser.email].filter(Boolean).map(String);
+}
+
+function isOwnRoute(route) {
+  const keys = currentUserKeys();
+  return keys.includes(String(route?.ownerId || '')) || (route?.ownerEmail && keys.includes(String(route.ownerEmail)));
+}
+
 function unlockRouteAccess() {
   if (!authUser) {
     openAuthModal('login');
@@ -1127,7 +1137,7 @@ async function showRoute(id) {
 async function deleteRoute(id) {
   const route = routes.find(r => r.id === id);
   if (!route) return showStatus('Route not found.', true);
-  if (!authUser || route.ownerId !== (authUser.id || authUser.sub)) return showStatus('You can only delete your own uploaded routes.', true);
+  if (!authUser || !isOwnRoute(route)) return showStatus('You can only delete your own uploaded routes.', true);
   const confirmed = window.confirm(`Delete "${route.title || 'this route'}"? This cannot be undone.`);
   if (!confirmed) return;
 
@@ -1201,7 +1211,7 @@ function renderRoutes() {
   }
   els.routeList.innerHTML = filtered.map(route => {
     const selected = activeRoute?.id === route.id;
-    const owned = authUser && route.ownerId === (authUser.id || authUser.sub);
+    const owned = authUser && isOwnRoute(route);
     const weather = routeWeatherSummary(route);
     return `<article class="route-item ${selected ? 'selected' : ''}">
       <button type="button" class="route-view-btn" data-route-id="${escapeHtml(route.id)}" aria-label="Show ${escapeHtml(route.title || 'route')} on the map">
@@ -1291,13 +1301,53 @@ function distanceBetweenKm(a, b) {
 
 async function getIdentityToken() {
   const user = window.netlifyIdentity?.currentUser?.() || window.netlifyIdentity?.gotrue?.currentUser?.() || authUser;
+  const direct = await tokenFromIdentityUser(user);
+  if (direct) return direct;
+
+  // Netlify Identity stores the logged-in user in localStorage. Some widget/login paths
+  // expose authUser to the UI but do not keep a fresh token on that object. This fallback
+  // finds the real access_token so Functions can still confirm the user is logged in.
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i) || '';
+      const raw = localStorage.getItem(key) || '';
+      if (!raw || (!key.toLowerCase().includes('gotrue') && !key.toLowerCase().includes('netlify') && !raw.includes('access_token'))) continue;
+      const parsed = JSON.parse(raw);
+      const token = findAccessToken(parsed);
+      if (token) return token;
+    }
+  } catch (err) {
+    console.warn('Could not read Identity token from localStorage:', err);
+  }
+  return '';
+}
+
+async function tokenFromIdentityUser(user) {
   if (!user) return '';
   try {
-    if (typeof user.jwt === 'function') return await user.jwt(true);
+    if (typeof user.jwt === 'function') {
+      const refreshed = await user.jwt(true);
+      if (refreshed) return refreshed;
+    }
   } catch (err) {
     console.warn('Could not refresh Identity token:', err);
   }
-  return user.token?.access_token || user.token?.accessToken || '';
+  return findAccessToken(user);
+}
+
+function findAccessToken(value, depth = 0) {
+  if (!value || depth > 5) return '';
+  if (typeof value === 'string') return value.split('.').length === 3 ? value : '';
+  if (typeof value !== 'object') return '';
+
+  const direct = value.access_token || value.accessToken || value.jwt || value.token;
+  if (typeof direct === 'string' && direct.split('.').length === 3) return direct;
+
+  for (const child of Object.values(value)) {
+    const found = findAccessToken(child, depth + 1);
+    if (found) return found;
+  }
+  return '';
 }
 
 async function safeJson(res) {
