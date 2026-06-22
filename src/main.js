@@ -522,13 +522,14 @@ function initMap() {
     touchZoom: true,
     tap: false,
     bounceAtZoomLimits: false,
-    // Keep mobile pinch zoom untouched. On desktop we use our own calmer wheel handler
-    // because Leaflet's default wheel handler can feel jumpy on trackpads.
-    scrollWheelZoom: isTouchDevice ? true : false,
+    // Use Leaflet's built-in zoom again. The previous custom desktop wheel handler
+    // could block trackpad zoom completely in some browsers.
+    // Desktop zoom is centered and slowed down; mobile pinch zoom stays native.
+    scrollWheelZoom: isTouchDevice ? true : 'center',
     zoomSnap: isTouchDevice ? 1 : 0.25,
-    zoomDelta: isTouchDevice ? 1 : 0.25,
-    wheelPxPerZoomLevel: isTouchDevice ? 60 : 180,
-    wheelDebounceTime: isTouchDevice ? 40 : 80,
+    zoomDelta: isTouchDevice ? 1 : 0.5,
+    wheelPxPerZoomLevel: isTouchDevice ? 60 : 160,
+    wheelDebounceTime: isTouchDevice ? 40 : 60,
     zoomAnimation: false,
     fadeAnimation: false,
     markerZoomAnimation: false,
@@ -550,7 +551,6 @@ function initMap() {
   }).addTo(map);
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
-  setupDesktopWheelZoom(isTouchDevice);
   map.createPane('routePane');
   map.getPane('routePane').style.zIndex = 640;
   map.getPane('routePane').style.pointerEvents = 'none';
@@ -591,44 +591,6 @@ function initMap() {
   setTimeout(() => scheduleMapRefresh(700), 700);
 }
 
-
-function setupDesktopWheelZoom(isTouchDevice) {
-  if (isTouchDevice || !map) return;
-
-  const container = map.getContainer();
-  let wheelAccumulator = 0;
-  let lastWheelAt = 0;
-
-  container.addEventListener('wheel', event => {
-    // Desktop only. Mobile pinch zoom remains handled by Leaflet.
-    event.preventDefault();
-    event.stopPropagation();
-
-    const now = Date.now();
-    if (now - lastWheelAt > 220) wheelAccumulator = 0;
-    lastWheelAt = now;
-
-    const modeMultiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 320 : 1;
-    const rawDelta = event.deltaY * modeMultiplier;
-    const safeDelta = clamp(rawDelta, -360, 360);
-    wheelAccumulator += safeDelta;
-
-    // Higher threshold + smaller step = slower, predictable desktop zoom.
-    // One mouse-wheel notch should not jump a full zoom level anymore.
-    const threshold = event.ctrlKey ? 120 : 220;
-    const step = 0.25;
-    let safety = 0;
-
-    while (Math.abs(wheelAccumulator) >= threshold && safety < 4) {
-      const direction = wheelAccumulator > 0 ? -1 : 1;
-      const nextZoom = clamp(map.getZoom() + direction * step, map.getMinZoom(), map.getMaxZoom());
-      if (nextZoom === map.getZoom()) break;
-      map.setZoom(nextZoom, { animate: false });
-      wheelAccumulator -= Math.sign(wheelAccumulator) * threshold;
-      safety += 1;
-    }
-  }, { passive: false });
-}
 
 function renderMarkers() {
   markerLayer.clearLayers();
