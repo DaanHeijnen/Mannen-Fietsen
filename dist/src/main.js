@@ -538,7 +538,7 @@ function initMap() {
     scrollWheelZoom: true,
     zoomSnap: 1,
     zoomDelta: 1,
-    wheelPxPerZoomLevel: 120,
+    wheelPxPerZoomLevel: 135,
     wheelDebounceTime: 45,
     zoomAnimation: false,
     fadeAnimation: false,
