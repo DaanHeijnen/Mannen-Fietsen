@@ -16,6 +16,7 @@ const WINDOWS = {
 };
 
 const SIGNUP_SECRET = 'Mannenavond';
+const ROUTE_ACCESS_STORAGE_KEY = 'mannenfietsplanner:route-access-key';
 
 const API_VARIABLES = [
   'temperature_2m',
@@ -79,7 +80,7 @@ app.innerHTML = `
         <div class="metric"><label>Rain risk</label><strong id="mRain">--</strong></div>
         <div class="metric"><label>Wind</label><strong id="mWind">--</strong></div>
         <div class="metric"><label>Gusts</label><strong id="mGust">--</strong></div>
-        <div class="metric"><label>Hooikoorts</label><strong id="mPollen">--</strong></div>
+        <div class="metric"><label>Pollen</label><strong id="mPollen">--</strong></div>
         <div class="metric"><label>Confidence</label><strong id="mConfidence">--</strong></div>
       </div>
       <div id="routeTip" class="route-tip">Tip appears after forecast data loads.</div>
@@ -93,6 +94,7 @@ app.innerHTML = `
         <div>
           <h3>GPX routes</h3>
           <p id="routeAuthState">Log in to upload your own routes.</p>
+          <button id="routeUnlockBtn" class="route-unlock-btn" type="button" hidden>Unlock uploads</button>
         </div>
         <div class="route-head-actions">
           <button id="clearRouteBtn" class="route-clear-btn" type="button" hidden>Hide route</button>
@@ -134,7 +136,7 @@ app.innerHTML = `
         <div class="pill"><span>Temp</span><strong id="dTemp">--</strong></div>
         <div class="pill"><span>Humidity</span><strong id="dHumidity">--</strong></div>
         <div class="pill"><span>UV</span><strong id="dUv">--</strong></div>
-        <div class="pill"><span>Hooikoorts</span><strong id="dPollen">--</strong></div>
+        <div class="pill"><span>Pollen</span><strong id="dPollen">--</strong></div>
       </div>
     </article>
     <article class="card legend">
@@ -221,6 +223,7 @@ const els = {
   clearRouteBtn: document.querySelector('#clearRouteBtn'),
   mobileRouteMenu: document.querySelector('#mobileRouteMenu'),
   routeAuthState: document.querySelector('#routeAuthState'),
+  routeUnlockBtn: document.querySelector('#routeUnlockBtn'),
   routeUploadForm: document.querySelector('#routeUploadForm'),
   routeTitleInput: document.querySelector('#routeTitleInput'),
   routeCreatorInput: document.querySelector('#routeCreatorInput'),
@@ -320,6 +323,7 @@ function initRouteControls() {
     setTimeout(hideStatus, 1100);
   });
   els.routeUploadForm.addEventListener('submit', handleRouteUpload);
+  els.routeUnlockBtn?.addEventListener('click', unlockRouteAccess);
   els.routeTabs.addEventListener('click', event => {
     const btn = event.target.closest('[data-route-filter]');
     if (!btn) return;
@@ -332,7 +336,10 @@ function initRouteControls() {
     setRoutePanelOpen(true);
     if (action === 'all' || action === 'mine') setRouteFilter(action);
     if (action === 'upload') {
-      if (!canUploadRoutes()) return showStatus('Create an account with the secret key before uploading GPX routes.', true);
+      if (!canUploadRoutes()) {
+        openAuthModal('login');
+        return;
+      }
       setTimeout(() => els.routeTitleInput?.focus(), 120);
     }
   });
@@ -373,20 +380,46 @@ function initAuth() {
 function renderAuthState() {
   const hasIdentity = Boolean(window.netlifyIdentity);
   const email = authUser?.email;
-  const verified = canUploadRoutes();
+  const canUpload = canUploadRoutes();
   els.routeAuthState.textContent = email
-    ? verified ? `Logged in as ${email}` : `Logged in as ${email}. Uploads require the secret key account.`
+    ? `Logged in as ${email}. You can upload GPX routes.`
     : hasIdentity ? 'Log in to upload your own routes.' : 'Netlify Identity is not loaded yet.';
+  if (els.routeUnlockBtn) els.routeUnlockBtn.hidden = true;
   els.topAuthBtn.textContent = email ? isTouchMapDevice() ? 'Routes' : 'Log out' : 'Log in';
   els.topAuthBtn.classList.toggle('logged-in', Boolean(email));
-  els.routeUploadBtn.disabled = !verified;
-  els.routeUploadForm.classList.toggle('disabled', !verified);
+  els.routeUploadBtn.disabled = !canUpload;
+  els.routeUploadForm.classList.toggle('disabled', !canUpload);
   els.mobileRouteMenu.hidden = !(isTouchMapDevice() && email && routePanelOpen);
 }
 
+function routeAccessKey() {
+  try { return localStorage.getItem(ROUTE_ACCESS_STORAGE_KEY) || ''; } catch { return ''; }
+}
+
 function canUploadRoutes() {
-  const meta = authUser?.user_metadata || authUser?.user_metadata || {};
-  return Boolean(authUser && (meta.routeAccessKey === SIGNUP_SECRET || meta.route_access_key === SIGNUP_SECRET || meta.routeAccess === true));
+  return Boolean(authUser);
+}
+
+function unlockRouteAccess() {
+  if (!authUser) {
+    openAuthModal('login');
+    return false;
+  }
+  const key = window.prompt('Enter the Mannenavond secret key to unlock GPX uploads for this account:');
+  if (key === null) return false;
+  if (key.trim() !== SIGNUP_SECRET) {
+    showStatus('Wrong secret key.', true);
+    return false;
+  }
+  try { localStorage.setItem(ROUTE_ACCESS_STORAGE_KEY, SIGNUP_SECRET); } catch {}
+  try {
+    const current = window.netlifyIdentity?.currentUser?.();
+    current?.update?.({ data: { routeAccessKey: SIGNUP_SECRET, routeAccess: true } });
+  } catch {}
+  renderAuthState();
+  showStatus('GPX uploads unlocked for this browser.');
+  setTimeout(hideStatus, 1400);
+  return true;
 }
 
 function handleTopAuthClick() {
@@ -489,6 +522,13 @@ function initMap() {
     touchZoom: true,
     tap: false,
     bounceAtZoomLimits: false,
+    // Desktop mouse-wheel zoom felt too sensitive.
+    // Use fractional zoom steps and require more wheel movement per zoom level,
+    // while keeping touch/pinch zoom unchanged for mobile.
+    zoomSnap: isTouchDevice ? 1 : 0.25,
+    zoomDelta: isTouchDevice ? 1 : 0.5,
+    wheelPxPerZoomLevel: isTouchDevice ? 60 : 85,
+    wheelDebounceTime: isTouchDevice ? 40 : 55,
     zoomAnimation: false,
     fadeAnimation: false,
     markerZoomAnimation: false,
@@ -791,13 +831,13 @@ function renderHero() {
   const h = current.hour;
   const s = current.summary;
   els.heroTitle.textContent = `Now in ${forecast.zone.name}`;
-  els.heroSub.textContent = `${Math.round(h.temp)}°C · ${weatherDescription(h.code)} · ${Math.round(h.rainProb)}% rain risk · ${formatPollen(h.pollen, h.pollenDominant)} hooikoorts.`;
+  els.heroSub.textContent = `Next 3 hours: ${Math.round(s.temp)}°C · ${weatherDescription(h.code)} · ${Math.round(s.rainProb)}% rain risk · ${formatPollen(s.pollen)} pollen.`;
   els.scoreBubble.style.setProperty('--score', s.score);
   els.scoreBubble.querySelector('span').textContent = s.score;
   els.mRain.textContent = `${Math.round(h.rainProb)}% / ${formatRainMm(Math.max(h.precip, h.rain), h.rainProb)}`;
   els.mWind.textContent = `${Math.round(h.wind)} km/h`;
   els.mGust.textContent = `${Math.round(h.gust)} km/h`;
-  els.mPollen.textContent = formatPollen(h.pollen, h.pollenDominant);
+  els.mPollen.textContent = formatPollen(h.pollen);
   els.mConfidence.textContent = `${s.confidence}%`;
   els.routeTip.textContent = routeTip(h.dir, h.wind, h.gust);
 }
@@ -817,7 +857,7 @@ function renderWindows() {
             <span>${Math.round(s.temp)}°C</span>
             <span>${Math.round(s.humidity)}% humidity</span>
             <span>UV ${formatUv(s.uv)}</span>
-            <span>Hooikoorts ${formatPollen(s.pollen, s.pollenDominant)}</span>
+            <span>Pollen ${formatPollen(s.pollen)}</span>
           </div>
         </div>
         <div class="grade ${cl}">${s.grade.toUpperCase()}</div>
@@ -864,7 +904,7 @@ function renderDetail() {
   els.dTemp.textContent = `${Math.round(s.temp)}°C`;
   els.dHumidity.textContent = `${Math.round(s.humidity)}%`;
   els.dUv.textContent = formatUv(s.uv);
-  els.dPollen.textContent = formatPollen(s.pollen, s.pollenDominant);
+  els.dPollen.textContent = formatPollen(s.pollen);
 }
 
 function renderPredictionNotice() {
@@ -887,18 +927,18 @@ function backToCurrentConditions() {
 function getCurrentConditionsSummary(sourceForecast = forecast) {
   if (!sourceForecast?.hours?.length) return null;
   const now = new Date();
-  let hour = sourceForecast.hours[0];
-  let bestDiff = Math.abs(hour.time - now);
-  sourceForecast.hours.forEach(row => {
-    const diff = Math.abs(row.time - now);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      hour = row;
-    }
-  });
+  const start = new Date(now.getTime() - 15 * 60 * 1000);
+  const end = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  let hours = sourceForecast.hours.filter(row => row.time >= start && row.time <= end);
+  if (!hours.length) {
+    const future = sourceForecast.hours.filter(row => row.time >= now);
+    hours = future.length ? future.slice(0, 3) : sourceForecast.hours.slice(0, 3);
+  }
+  hours = hours.slice(0, 3);
+  const hour = hours[0] || sourceForecast.hours[0];
   const dayIndex = Math.max(0, sourceForecast.days.findIndex(day => day.key === hour.iso.slice(0, 10)));
-  const summary = summarizeWindow([hour], dayIndex, 'current');
-  return { hour, summary, dayIndex };
+  const summary = summarizeWindow(hours.length ? hours : [hour], dayIndex, 'current');
+  return { hour, hours, summary, dayIndex };
 }
 
 function getSelectedForecastSummary(sourceForecast = forecast) {
@@ -1013,7 +1053,10 @@ async function loadRoutes() {
 async function handleRouteUpload(event) {
   event.preventDefault();
   const file = els.routeFileInput.files?.[0];
-  if (!canUploadRoutes()) return showStatus('Create an account with the secret key before uploading GPX routes.', true);
+  if (!canUploadRoutes()) {
+    openAuthModal('login');
+    return;
+  }
   if (!file) return showStatus('Choose a .gpx file first.', true);
   if (!file.name.toLowerCase().endsWith('.gpx')) return showStatus('Only .gpx files are supported.', true);
   if (file.size > 4 * 1024 * 1024) return showStatus('This GPX file is too large. Keep it below 4 MB.', true);
@@ -1212,7 +1255,7 @@ function routeWeatherSummary(route) {
   const selected = getSelectedForecastSummary();
   if (!selected?.summary) return 'Weather loading...';
   const s = selected.summary;
-  return `${Math.round(s.wind)} km/h wind · ${Math.round(s.rainProb)}% rain · ${Math.round(s.temp)}°C · ${formatPollen(s.pollen, s.pollenDominant)} hooikoorts`;
+  return `${Math.round(s.wind)} km/h wind · ${Math.round(s.rainProb)}% rain · ${Math.round(s.temp)}°C · ${formatPollen(s.pollen)} pollen`;
 }
 
 function parseGpx(gpxText) {
@@ -1247,9 +1290,13 @@ function distanceBetweenKm(a, b) {
 }
 
 async function getIdentityToken() {
-  const user = window.netlifyIdentity?.currentUser?.() || authUser;
+  const user = window.netlifyIdentity?.currentUser?.() || window.netlifyIdentity?.gotrue?.currentUser?.() || authUser;
   if (!user) return '';
-  if (typeof user.jwt === 'function') return user.jwt();
+  try {
+    if (typeof user.jwt === 'function') return await user.jwt(true);
+  } catch (err) {
+    console.warn('Could not refresh Identity token:', err);
+  }
   return user.token?.access_token || user.token?.accessToken || '';
 }
 
@@ -1588,18 +1635,14 @@ function pollenScore(values) {
   return best;
 }
 function pollenRiskLevel(value) {
-  if (!isFiniteNumber(value)) return { label: 'Unknown', penalty: 0 };
+  if (!isFiniteNumber(value)) return { label: '--', penalty: 0 };
   const p = n(value);
-  if (p < 25) return { label: 'Low', penalty: 0 };
-  if (p < 50) return { label: 'Moderate', penalty: 3 };
-  if (p < 75) return { label: 'High', penalty: 7 };
-  return { label: 'Very high', penalty: 10 };
+  if (p < 30) return { label: 'Low', penalty: 0 };
+  if (p < 65) return { label: 'Medium', penalty: 4 };
+  return { label: 'High', penalty: 9 };
 }
-function formatPollen(value, dominant = null) {
-  if (!isFiniteNumber(value)) return 'Unknown';
-  const level = pollenRiskLevel(value).label;
-  const type = dominant ? ` ${pollenTypeLabel(dominant)}` : '';
-  return `${level}${type}`;
+function formatPollen(value) {
+  return pollenRiskLevel(value).label;
 }
 function pollenTypeLabel(type) {
   const labels = { alder: 'alder', birch: 'birch', grass: 'grass', mugwort: 'mugwort', olive: 'olive', ragweed: 'ragweed' };

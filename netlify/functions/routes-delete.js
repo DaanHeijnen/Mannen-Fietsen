@@ -1,18 +1,59 @@
 import { getStore } from '@netlify/blobs';
-import { getUser as getNetlifyUser } from '@netlify/identity';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { 'Content-Type': 'application/json' }
 });
 
+
 async function resolveUser(req, context) {
   try {
-    const user = await getNetlifyUser();
-    if (user) return user;
-  } catch {}
-  return context?.clientContext?.user || null;
+    const { getUser } = await import('@netlify/identity');
+    const identityUser = await getUser();
+    if (identityUser) {
+      return {
+        id: identityUser.id,
+        sub: identityUser.id,
+        email: identityUser.email || '',
+        user_metadata: identityUser.userMetadata || identityUser.user_metadata || {},
+        app_metadata: identityUser.appMetadata || identityUser.app_metadata || {}
+      };
+    }
+  } catch (err) {
+    console.warn('Netlify Identity getUser fallback used:', err?.message || err);
+  }
+
+  const contextUser = context?.clientContext?.user || context?.identityContext?.user || null;
+  if (contextUser) return contextUser;
+
+  const auth = req.headers.get('authorization') || req.headers.get('Authorization') || '';
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  if (!match) return null;
+
+  try {
+    const payload = decodeJwtPayload(match[1]);
+    if (!payload?.sub && !payload?.email) return null;
+    return {
+      id: payload.sub || payload.id || payload.email,
+      sub: payload.sub || payload.id || payload.email,
+      email: payload.email || '',
+      user_metadata: payload.user_metadata || {},
+      app_metadata: payload.app_metadata || {}
+    };
+  } catch (err) {
+    console.warn('Could not decode Identity token:', err?.message || err);
+    return null;
+  }
 }
+
+function decodeJwtPayload(token) {
+  const part = String(token || '').split('.')[1];
+  if (!part) return null;
+  const base64 = part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '=');
+  const json = Buffer.from(base64, 'base64').toString('utf8');
+  return JSON.parse(json);
+}
+
 
 export default async (req, context) => {
   if (req.method !== 'POST' && req.method !== 'DELETE') return json({ error: 'Method not allowed' }, 405);
