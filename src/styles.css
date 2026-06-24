@@ -566,3 +566,46 @@ button, input, select { font: inherit; }
 @media (max-width: 980px) {
   .leaflet-control-zoom { display: none !important; }
 }
+
+
+/* Mobile route panel should behave as a true modal above the app. */
+.route-modal-backdrop { display: none; }
+
+@media (max-width: 980px) {
+  body.route-panel-open {
+    overflow: hidden;
+  }
+  body.route-panel-open .route-modal-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 1190;
+    background: rgba(0, 0, 0, .38);
+    backdrop-filter: blur(2px);
+    pointer-events: auto;
+  }
+  body.route-panel-open .sidepanel {
+    z-index: 1200;
+  }
+  body.route-panel-open .topbar,
+  body.route-panel-open .map-notices,
+  body.route-panel-open .bottompanel {
+    pointer-events: none;
+  }
+  body.route-panel-open .routes-card.open {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: calc(100svh - 24px);
+    z-index: 1201;
+    pointer-events: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  body.route-panel-open .routes-card.open {
+    top: 10px;
+    max-height: calc(100svh - 20px);
+  }
+}

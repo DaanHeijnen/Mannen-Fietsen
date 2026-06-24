@@ -55,6 +55,7 @@ app.innerHTML = `
       <button id="clearRouteBtn" type="button">Hide route</button>
     </div>
   </div>
+  <div id="routeModalBackdrop" class="route-modal-backdrop" hidden></div>
   <div class="topbar">
     <div class="brand">
       <div class="logo">🚴</div>
@@ -224,6 +225,7 @@ const els = {
   topAuthBtn: document.querySelector('#topAuthBtn'),
   topRoutesBtn: document.querySelector('#topRoutesBtn'),
   routesCard: document.querySelector('#routesCard'),
+  routeModalBackdrop: document.querySelector('#routeModalBackdrop'),
   routePanelCloseBtn: document.querySelector('#routePanelCloseBtn'),
   clearRouteBtn: document.querySelector('#clearRouteBtn'),
   routeAuthState: document.querySelector('#routeAuthState'),
@@ -322,6 +324,7 @@ function initRouteControls() {
   els.topAuthBtn.addEventListener('click', handleTopAuthClick);
   els.topRoutesBtn.addEventListener('click', () => setRoutePanelOpen(!routePanelOpen));
   els.routePanelCloseBtn.addEventListener('click', () => setRoutePanelOpen(false));
+  els.routeModalBackdrop?.addEventListener('click', () => setRoutePanelOpen(false));
   els.clearRouteBtn.addEventListener('click', () => {
     clearRoute();
     showStatus('Route hidden.');
@@ -507,7 +510,9 @@ async function handleCustomAuthSubmit(event) {
 
 function setRoutePanelOpen(open) {
   routePanelOpen = Boolean(open);
+  document.body.classList.toggle('route-panel-open', routePanelOpen);
   els.routesCard.classList.toggle('open', routePanelOpen);
+  if (els.routeModalBackdrop) els.routeModalBackdrop.hidden = !routePanelOpen;
   els.topRoutesBtn.classList.toggle('active', routePanelOpen);
   if (!routePanelOpen) routeUploadOpen = false;
   renderAuthState();
