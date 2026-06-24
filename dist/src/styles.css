@@ -313,9 +313,12 @@ button, input, select { font: inherit; }
 .route-view-btn { width: 100%; display: block; text-align: left; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; }
 .route-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
 .route-download-btn,
+.route-share-btn,
 .route-delete-btn { border-radius: 999px; padding: 7px 10px; font-size: 12px; font-weight: 900; cursor: pointer; }
 .route-download-btn { border: 1px solid rgba(75,179,253,.45); color: #d7ecff; background: rgba(75,179,253,.12); }
 .route-download-btn:hover { border-color: rgba(75,179,253,.82); background: rgba(75,179,253,.2); }
+.route-share-btn { border: 1px solid rgba(255,178,26,.52); color: #ffe1a2; background: rgba(255,178,26,.12); }
+.route-share-btn:hover { border-color: rgba(255,178,26,.85); background: rgba(255,178,26,.2); }
 .route-delete-btn { border: 1px solid rgba(255,107,107,.42); color: #ffd0d0; background: rgba(255,107,107,.12); }
 .route-delete-btn:hover { border-color: rgba(255,107,107,.8); background: rgba(255,107,107,.22); }
 .route-title-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
