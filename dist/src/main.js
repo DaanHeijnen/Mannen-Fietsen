@@ -386,6 +386,16 @@ function canUploadRoutes() {
   return Boolean(authUser);
 }
 
+function toggleRouteUpload() {
+  if (!canUploadRoutes()) {
+    openAuthModal('login');
+    return;
+  }
+  routeUploadOpen = !routeUploadOpen;
+  renderAuthState();
+  if (routeUploadOpen) setTimeout(() => els.routeTitleInput?.focus(), 120);
+}
+
 function currentUserKeys() {
   if (!authUser) return [];
   return [authUser.id, authUser.sub, authUser.email].filter(Boolean).map(String);
