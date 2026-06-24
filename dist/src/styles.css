@@ -591,6 +591,12 @@ button, input, select { font: inherit; }
   body.route-panel-open .map-notices,
   body.route-panel-open .bottompanel {
     pointer-events: none;
+    filter: blur(3px);
+  }
+  body.route-panel-open .sidepanel > :not(.routes-card.open) {
+    pointer-events: none;
+    filter: blur(3px);
+    opacity: .58;
   }
   body.route-panel-open .routes-card.open {
     top: 12px;
