@@ -300,7 +300,7 @@ function init() {
     if (!document.hidden && forecast) startWind(false);
   });
   loadForecast(selectedZone);
-  loadRoutes();
+  loadRoutes().then(showRouteFromUrl).catch(() => showRouteFromUrl());
   centerMapOnSelectedPlace(450);
 }
 
@@ -1182,16 +1182,18 @@ async function showRoute(id) {
     const data = await fetchJson(`/.netlify/functions/routes-get?id=${encodeURIComponent(id)}`);
     const parsed = parseGpx(data.gpx);
     if (!parsed.points.length) throw new Error('This route has no points.');
-    activeRoute = { ...(route || data.route), points: parsed.points };
+    const routeData = route || data.route || { id };
+    activeRoute = { ...routeData, points: parsed.points };
     drawRoute(parsed.points);
     if (els.routeNotice) {
-      els.routeNoticeText.textContent = route?.title ? `Showing route: ${route.title}` : 'Route shown on the map';
+      els.routeNoticeText.textContent = routeData?.title ? `Showing route: ${routeData.title}` : 'Route shown on the map';
       els.routeNotice.hidden = false;
       updateMapNoticesLayout();
     }
     renderRoutes();
     if (isTouchMapDevice()) setRoutePanelOpen(false);
-    showStatus(route ? `${route.title} shown on the map.` : 'Route shown on the map.');
+    const shownTitle = routeData?.title || route?.title;
+    showStatus(shownTitle ? `${shownTitle} shown on the map.` : 'Route shown on the map.');
     setTimeout(hideStatus, 1200);
   } catch (err) {
     console.error(err);
@@ -1289,6 +1291,7 @@ function renderRoutes() {
       </button>
       <div class="route-actions">
         <button type="button" class="route-download-btn" data-route-download-id="${escapeHtml(route.id)}" aria-label="Download ${escapeHtml(route.title || 'route')} GPX">Download GPX</button>
+        <button type="button" class="route-share-btn" data-route-share-id="${escapeHtml(route.id)}" aria-label="Share ${escapeHtml(route.title || 'route')}">Share</button>
         ${owned ? `<button type="button" class="route-delete-btn" data-route-delete-id="${escapeHtml(route.id)}" aria-label="Delete ${escapeHtml(route.title || 'route')}">Delete</button>` : ''}
       </div>
     </article>`;
@@ -1298,11 +1301,87 @@ function renderRoutes() {
     event.stopPropagation();
     downloadRoute(btn.dataset.routeDownloadId);
   }));
+  els.routeList.querySelectorAll('[data-route-share-id]').forEach(btn => btn.addEventListener('click', event => {
+    event.stopPropagation();
+    shareRoute(btn.dataset.routeShareId);
+  }));
   els.routeList.querySelectorAll('[data-route-delete-id]').forEach(btn => btn.addEventListener('click', event => {
     event.stopPropagation();
     deleteRoute(btn.dataset.routeDeleteId);
   }));
   updateMapNoticesLayout();
+}
+
+function routeShareSlug(route) {
+  return slugifyRouteName(route?.title || route?.id || 'route');
+}
+
+function routeShareText(route) {
+  return `Bekijk deze route:\nFietsen.daanheijnen.nl/?route=${routeShareSlug(route)}`;
+}
+
+function routeIdFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const routeId = params.get('route') || params.get('routeId');
+  if (routeId) return routeId;
+  if (window.location.hash) {
+    const hash = window.location.hash.replace(/^#/, '');
+    const hashParams = new URLSearchParams(hash.includes('=') ? hash : `route=${hash}`);
+    return hashParams.get('route') || hashParams.get('routeId');
+  }
+  return '';
+}
+
+function routeIdFromShareValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const byId = routes.find(route => String(route.id) === raw);
+  if (byId) return byId.id;
+  const wantedSlug = slugifyRouteName(raw);
+  const bySlug = routes.find(route => slugifyRouteName(route.title || '') === wantedSlug);
+  return bySlug?.id || raw;
+}
+
+async function showRouteFromUrl() {
+  const routeId = routeIdFromShareValue(routeIdFromUrl());
+  if (!routeId || activeRoute?.id === routeId) return;
+  await showRoute(routeId);
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const input = document.createElement('textarea');
+  input.value = text;
+  input.setAttribute('readonly', '');
+  input.style.position = 'fixed';
+  input.style.left = '-9999px';
+  document.body.appendChild(input);
+  input.select();
+  const copied = document.execCommand('copy');
+  input.remove();
+  return copied;
+}
+
+async function shareRoute(id) {
+  const route = routes.find(r => r.id === id);
+  const shareText = routeShareText(route || { id });
+  const title = route?.title ? `Fietsroute: ${route.title}` : 'Fietsroute';
+  try {
+    if (navigator.share) {
+      await navigator.share({ title, text: shareText });
+      return;
+    }
+    await copyText(shareText);
+    showStatus('Route link copied. Share it with your friends.');
+    setTimeout(hideStatus, 1600);
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    console.error(err);
+    window.prompt('Copy this route link:', shareText);
+  }
 }
 
 async function downloadRoute(id) {
@@ -1779,6 +1858,14 @@ function slugifyFilename(value) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-zA-Z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'route';
+}
+function slugifyRouteName(value) {
+  return String(value || 'route')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
     .slice(0, 80) || 'route';
 }
 function isFiniteNumber(x) { return Number.isFinite(Number(x)); }
