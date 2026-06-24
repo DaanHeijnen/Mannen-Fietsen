@@ -45,6 +45,17 @@ const POLLEN_VARIABLES = [
 const app = document.querySelector('#app');
 app.innerHTML = `
   <div id="map" class="map"></div>
+  <div id="mapNotices" class="map-notices">
+    <div id="predictionNotice" class="map-notice prediction-notice" hidden>
+      <span id="predictionNoticeText">Showing predictions</span>
+      <button id="backToCurrentBtn" type="button">Back to current conditions</button>
+    </div>
+    <div id="routeNotice" class="map-notice route-notice" hidden>
+      <span id="routeNoticeText">Route shown on the map</span>
+      <button id="clearRouteBtn" type="button">Hide route</button>
+    </div>
+  </div>
+  <div id="routeModalBackdrop" class="route-modal-backdrop" hidden></div>
   <div class="topbar">
     <div class="brand">
       <div class="logo">🚴</div>
@@ -62,10 +73,6 @@ app.innerHTML = `
     </div>
   </div>
   <div id="status" class="status"></div>
-  <div id="predictionNotice" class="prediction-notice" hidden>
-    <span id="predictionNoticeText">Showing predictions</span>
-    <button id="backToCurrentBtn" type="button">Back to current conditions</button>
-  </div>
   <section class="sidepanel">
     <article class="card hero">
       <div class="hero-head">
@@ -97,16 +104,11 @@ app.innerHTML = `
           <button id="routeUnlockBtn" class="route-unlock-btn" type="button" hidden>Unlock uploads</button>
         </div>
         <div class="route-head-actions">
-          <button id="clearRouteBtn" class="route-clear-btn" type="button" hidden>Hide route</button>
           <button id="routePanelCloseBtn" class="route-panel-close" type="button" aria-label="Close routes">×</button>
         </div>
       </div>
-      <div id="mobileRouteMenu" class="mobile-route-menu" hidden>
-        <button type="button" data-mobile-route-action="all">All routes</button>
-        <button type="button" data-mobile-route-action="mine">My routes</button>
-        <button type="button" data-mobile-route-action="upload">Upload GPX</button>
-      </div>
-      <form id="routeUploadForm" class="route-upload">
+      <button id="routeUploadToggleBtn" class="route-upload-toggle" type="button">Upload route via GPX</button>
+      <form id="routeUploadForm" class="route-upload" hidden>
         <div class="route-upload-grid">
           <input id="routeTitleInput" name="title" placeholder="Route name" maxlength="80" />
           <input id="routeCreatorInput" name="creator" placeholder="Made by" maxlength="60" />
@@ -184,6 +186,7 @@ let activePin = null;
 let authUser = null;
 let routes = [];
 let routeFilter = 'all';
+let routeUploadOpen = false;
 let activeRoute = null;
 let routePanelOpen = false;
 let authModalMode = 'login';
@@ -193,8 +196,11 @@ const els = {
   windowSelect: document.querySelector('#windowSelect'),
   windows: document.querySelector('#windows'),
   status: document.querySelector('#status'),
+  mapNotices: document.querySelector('#mapNotices'),
   predictionNotice: document.querySelector('#predictionNotice'),
   predictionNoticeText: document.querySelector('#predictionNoticeText'),
+  routeNotice: document.querySelector('#routeNotice'),
+  routeNoticeText: document.querySelector('#routeNoticeText'),
   backToCurrentBtn: document.querySelector('#backToCurrentBtn'),
   heroTitle: document.querySelector('#heroTitle'),
   heroSub: document.querySelector('#heroSub'),
@@ -219,11 +225,12 @@ const els = {
   topAuthBtn: document.querySelector('#topAuthBtn'),
   topRoutesBtn: document.querySelector('#topRoutesBtn'),
   routesCard: document.querySelector('#routesCard'),
+  routeModalBackdrop: document.querySelector('#routeModalBackdrop'),
   routePanelCloseBtn: document.querySelector('#routePanelCloseBtn'),
   clearRouteBtn: document.querySelector('#clearRouteBtn'),
-  mobileRouteMenu: document.querySelector('#mobileRouteMenu'),
   routeAuthState: document.querySelector('#routeAuthState'),
   routeUnlockBtn: document.querySelector('#routeUnlockBtn'),
+  routeUploadToggleBtn: document.querySelector('#routeUploadToggleBtn'),
   routeUploadForm: document.querySelector('#routeUploadForm'),
   routeTitleInput: document.querySelector('#routeTitleInput'),
   routeCreatorInput: document.querySelector('#routeCreatorInput'),
@@ -317,31 +324,20 @@ function initRouteControls() {
   els.topAuthBtn.addEventListener('click', handleTopAuthClick);
   els.topRoutesBtn.addEventListener('click', () => setRoutePanelOpen(!routePanelOpen));
   els.routePanelCloseBtn.addEventListener('click', () => setRoutePanelOpen(false));
+  els.routeModalBackdrop?.addEventListener('click', () => setRoutePanelOpen(false));
   els.clearRouteBtn.addEventListener('click', () => {
     clearRoute();
     showStatus('Route hidden.');
     setTimeout(hideStatus, 1100);
   });
+  els.routeUploadToggleBtn.addEventListener('click', toggleRouteUpload);
   els.routeUploadForm.addEventListener('submit', handleRouteUpload);
+  window.addEventListener('resize', updateMapNoticesLayout);
   els.routeUnlockBtn?.addEventListener('click', unlockRouteAccess);
   els.routeTabs.addEventListener('click', event => {
     const btn = event.target.closest('[data-route-filter]');
     if (!btn) return;
     setRouteFilter(btn.dataset.routeFilter);
-  });
-  els.mobileRouteMenu.addEventListener('click', event => {
-    const btn = event.target.closest('[data-mobile-route-action]');
-    if (!btn) return;
-    const action = btn.dataset.mobileRouteAction;
-    setRoutePanelOpen(true);
-    if (action === 'all' || action === 'mine') setRouteFilter(action);
-    if (action === 'upload') {
-      if (!canUploadRoutes()) {
-        openAuthModal('login');
-        return;
-      }
-      setTimeout(() => els.routeTitleInput?.focus(), 120);
-    }
   });
   els.authModeLoginBtn.addEventListener('click', () => setAuthModalMode('login'));
   els.authModeSignupBtn.addEventListener('click', () => setAuthModalMode('signup'));
@@ -385,11 +381,14 @@ function renderAuthState() {
     ? `Logged in as ${email}. You can upload GPX routes.`
     : hasIdentity ? 'Log in to upload your own routes.' : 'Netlify Identity is not loaded yet.';
   if (els.routeUnlockBtn) els.routeUnlockBtn.hidden = true;
-  els.topAuthBtn.textContent = email ? isTouchMapDevice() ? 'Routes' : 'Log out' : 'Log in';
+  els.topAuthBtn.textContent = email ? 'Log out' : 'Log in';
   els.topAuthBtn.classList.toggle('logged-in', Boolean(email));
   els.routeUploadBtn.disabled = !canUpload;
+  els.routeUploadToggleBtn.textContent = routeUploadOpen ? 'Close upload form' : 'Upload route via GPX';
+  els.routeUploadToggleBtn.classList.toggle('active', routeUploadOpen);
+  els.routeUploadForm.hidden = !routeUploadOpen;
   els.routeUploadForm.classList.toggle('disabled', !canUpload);
-  els.mobileRouteMenu.hidden = !(isTouchMapDevice() && email && routePanelOpen);
+  updateMapNoticesLayout();
 }
 
 function routeAccessKey() {
@@ -398,6 +397,16 @@ function routeAccessKey() {
 
 function canUploadRoutes() {
   return Boolean(authUser);
+}
+
+function toggleRouteUpload() {
+  if (!canUploadRoutes()) {
+    openAuthModal('login');
+    return;
+  }
+  routeUploadOpen = !routeUploadOpen;
+  renderAuthState();
+  if (routeUploadOpen) setTimeout(() => els.routeTitleInput?.focus(), 120);
 }
 
 function currentUserKeys() {
@@ -433,10 +442,6 @@ function unlockRouteAccess() {
 }
 
 function handleTopAuthClick() {
-  if (authUser && isTouchMapDevice()) {
-    setRoutePanelOpen(!routePanelOpen);
-    return;
-  }
   if (authUser) {
     window.netlifyIdentity?.logout?.();
     return;
@@ -505,10 +510,61 @@ async function handleCustomAuthSubmit(event) {
 
 function setRoutePanelOpen(open) {
   routePanelOpen = Boolean(open);
+  document.body.classList.toggle('route-panel-open', routePanelOpen);
   els.routesCard.classList.toggle('open', routePanelOpen);
+  if (els.routeModalBackdrop) els.routeModalBackdrop.hidden = !routePanelOpen;
   els.topRoutesBtn.classList.toggle('active', routePanelOpen);
-  els.mobileRouteMenu.hidden = !(isTouchMapDevice() && authUser && routePanelOpen);
+  if (!routePanelOpen) routeUploadOpen = false;
+  renderAuthState();
   if (routePanelOpen) loadRoutes();
+  updateMapNoticesLayout();
+}
+
+function updateMapNoticesLayout() {
+  if (!els.mapNotices || !els.routesCard) return;
+
+  const hasVisibleNotice = Boolean(els.mapNotices.querySelector('.map-notice:not([hidden])'));
+  const mobileLayout = window.matchMedia('(max-width: 980px)').matches;
+  els.mapNotices.classList.toggle('has-visible-notices', hasVisibleNotice);
+
+  if (mobileLayout) {
+    els.mapNotices.classList.remove('below-routes-panel');
+    els.mapNotices.style.top = '';
+    els.mapNotices.style.right = '';
+    els.mapNotices.style.width = '';
+    els.routesCard.style.maxHeight = '';
+    return;
+  }
+
+  if (!routePanelOpen) {
+    els.mapNotices.classList.remove('below-routes-panel');
+    els.mapNotices.style.top = '';
+    els.mapNotices.style.right = '';
+    els.mapNotices.style.width = '';
+    els.routesCard.style.maxHeight = '';
+    return;
+  }
+
+  els.mapNotices.classList.add('below-routes-panel');
+
+  requestAnimationFrame(() => {
+    if (!routePanelOpen || window.matchMedia('(max-width: 980px)').matches) return;
+
+    els.routesCard.style.maxHeight = '';
+    const margin = 10;
+    const cardRect = els.routesCard.getBoundingClientRect();
+    const noticeHeight = els.mapNotices.offsetHeight || 0;
+    const availableHeight = window.innerHeight - cardRect.top - noticeHeight - (margin * 3);
+
+    if (noticeHeight && availableHeight > 220 && cardRect.bottom + noticeHeight + (margin * 2) > window.innerHeight) {
+      els.routesCard.style.maxHeight = `${Math.floor(availableHeight)}px`;
+    }
+
+    const nextCardRect = els.routesCard.getBoundingClientRect();
+    els.mapNotices.style.top = `${Math.round(nextCardRect.bottom + margin)}px`;
+    els.mapNotices.style.right = `${Math.max(12, Math.round(window.innerWidth - nextCardRect.right))}px`;
+    els.mapNotices.style.width = `${Math.round(nextCardRect.width)}px`;
+  });
 }
 
 function setRouteFilter(filter) {
@@ -921,11 +977,13 @@ function renderDetail() {
 function renderPredictionNotice() {
   if (!forecast || selectedDayIndex === 0) {
     els.predictionNotice.hidden = true;
+    updateMapNoticesLayout();
     return;
   }
   const day = forecast.days[selectedDayIndex];
   els.predictionNoticeText.textContent = `Showing predictions for ${dateLong(day.date)}`;
   els.predictionNotice.hidden = false;
+  updateMapNoticesLayout();
 }
 
 function backToCurrentConditions() {
@@ -1105,6 +1163,8 @@ async function handleRouteUpload(event) {
     const data = await safeJson(res);
     if (!res.ok) throw new Error(data?.error || 'Upload failed');
     els.routeUploadForm.reset();
+    routeUploadOpen = false;
+    renderAuthState();
     showStatus('Route uploaded.');
     setTimeout(hideStatus, 1200);
     await loadRoutes();
@@ -1124,7 +1184,11 @@ async function showRoute(id) {
     if (!parsed.points.length) throw new Error('This route has no points.');
     activeRoute = { ...(route || data.route), points: parsed.points };
     drawRoute(parsed.points);
-    if (els.clearRouteBtn) els.clearRouteBtn.hidden = false;
+    if (els.routeNotice) {
+      els.routeNoticeText.textContent = route?.title ? `Showing route: ${route.title}` : 'Route shown on the map';
+      els.routeNotice.hidden = false;
+      updateMapNoticesLayout();
+    }
     renderRoutes();
     if (isTouchMapDevice()) setRoutePanelOpen(false);
     showStatus(route ? `${route.title} shown on the map.` : 'Route shown on the map.');
@@ -1197,7 +1261,8 @@ function drawRoute(points) {
 function clearRoute() {
   activeRoute = null;
   routeLayer?.clearLayers();
-  if (els.clearRouteBtn) els.clearRouteBtn.hidden = true;
+  if (els.routeNotice) els.routeNotice.hidden = true;
+  updateMapNoticesLayout();
   renderRoutes();
 }
 
@@ -1208,6 +1273,7 @@ function renderRoutes() {
     : routes;
   if (!filtered.length) {
     els.routeList.innerHTML = `<div class="route-empty">${routeFilter === 'mine' ? 'You have not uploaded any routes yet.' : 'No GPX routes uploaded yet.'}</div>`;
+    updateMapNoticesLayout();
     return;
   }
   els.routeList.innerHTML = filtered.map(route => {
@@ -1236,6 +1302,7 @@ function renderRoutes() {
     event.stopPropagation();
     deleteRoute(btn.dataset.routeDeleteId);
   }));
+  updateMapNoticesLayout();
 }
 
 async function downloadRoute(id) {
