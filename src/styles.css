@@ -274,10 +274,14 @@ button, input, select { font: inherit; }
 .routes-head p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
 .route-auth-actions { display: flex; gap: 6px; flex: 0 0 auto; }
 .route-auth-actions button,
+.route-upload-toggle,
 .route-upload button,
 .route-tabs button { border: 0; border-radius: 999px; padding: 8px 10px; font-size: 12px; font-weight: 850; cursor: pointer; color: #071018; background: var(--accent); }
 .route-auth-actions button[hidden] { display: none; }
-.route-upload { display: grid; gap: 8px; margin-top: 12px; }
+.route-upload-toggle { width: 100%; margin-top: 12px; }
+.route-upload-toggle.active { background: rgba(255,255,255,.14); color: var(--text); border: 1px solid var(--line); }
+.route-upload { display: grid; gap: 8px; margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.045); }
+.route-upload[hidden] { display: none; }
 .route-upload.disabled { opacity: .58; }
 .route-upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .route-upload input { width: 100%; min-width: 0; color: var(--text); background: rgba(255,255,255,.08); border: 1px solid var(--line); border-radius: 12px; padding: 9px 10px; outline: none; }
@@ -473,30 +477,12 @@ button, input, select { font: inherit; }
     max-height: calc(100svh - 92px);
     z-index: 960;
   }
-  .mobile-route-menu {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-    margin: 12px 0;
-  }
-  .mobile-route-menu[hidden] { display: none; }
-  .mobile-route-menu button {
-    border: 0;
-    border-radius: 999px;
-    padding: 10px 8px;
-    color: #071018;
-    background: var(--accent);
-    font-size: 12px;
-    font-weight: 900;
-    cursor: pointer;
-  }
 }
 
 @media (max-width: 520px) {
   .search-auth-row { gap: 7px; }
   .top-auth-actions button { padding: 10px 11px; font-size: 13px; }
   .searchbox button { padding: 10px 11px; }
-  .mobile-route-menu { grid-template-columns: 1fr; }
 }
 
 /* 18 June debug fixes: unlock existing accounts and make mobile panels scale better */

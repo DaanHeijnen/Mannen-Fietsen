@@ -101,12 +101,8 @@ app.innerHTML = `
           <button id="routePanelCloseBtn" class="route-panel-close" type="button" aria-label="Close routes">×</button>
         </div>
       </div>
-      <div id="mobileRouteMenu" class="mobile-route-menu" hidden>
-        <button type="button" data-mobile-route-action="all">All routes</button>
-        <button type="button" data-mobile-route-action="mine">My routes</button>
-        <button type="button" data-mobile-route-action="upload">Upload GPX</button>
-      </div>
-      <form id="routeUploadForm" class="route-upload">
+      <button id="routeUploadToggleBtn" class="route-upload-toggle" type="button">Upload route via GPX</button>
+      <form id="routeUploadForm" class="route-upload" hidden>
         <div class="route-upload-grid">
           <input id="routeTitleInput" name="title" placeholder="Route name" maxlength="80" />
           <input id="routeCreatorInput" name="creator" placeholder="Made by" maxlength="60" />
@@ -184,6 +180,7 @@ let activePin = null;
 let authUser = null;
 let routes = [];
 let routeFilter = 'all';
+let routeUploadOpen = false;
 let activeRoute = null;
 let routePanelOpen = false;
 let authModalMode = 'login';
@@ -221,9 +218,9 @@ const els = {
   routesCard: document.querySelector('#routesCard'),
   routePanelCloseBtn: document.querySelector('#routePanelCloseBtn'),
   clearRouteBtn: document.querySelector('#clearRouteBtn'),
-  mobileRouteMenu: document.querySelector('#mobileRouteMenu'),
   routeAuthState: document.querySelector('#routeAuthState'),
   routeUnlockBtn: document.querySelector('#routeUnlockBtn'),
+  routeUploadToggleBtn: document.querySelector('#routeUploadToggleBtn'),
   routeUploadForm: document.querySelector('#routeUploadForm'),
   routeTitleInput: document.querySelector('#routeTitleInput'),
   routeCreatorInput: document.querySelector('#routeCreatorInput'),
@@ -322,26 +319,13 @@ function initRouteControls() {
     showStatus('Route hidden.');
     setTimeout(hideStatus, 1100);
   });
+  els.routeUploadToggleBtn.addEventListener('click', toggleRouteUpload);
   els.routeUploadForm.addEventListener('submit', handleRouteUpload);
   els.routeUnlockBtn?.addEventListener('click', unlockRouteAccess);
   els.routeTabs.addEventListener('click', event => {
     const btn = event.target.closest('[data-route-filter]');
     if (!btn) return;
     setRouteFilter(btn.dataset.routeFilter);
-  });
-  els.mobileRouteMenu.addEventListener('click', event => {
-    const btn = event.target.closest('[data-mobile-route-action]');
-    if (!btn) return;
-    const action = btn.dataset.mobileRouteAction;
-    setRoutePanelOpen(true);
-    if (action === 'all' || action === 'mine') setRouteFilter(action);
-    if (action === 'upload') {
-      if (!canUploadRoutes()) {
-        openAuthModal('login');
-        return;
-      }
-      setTimeout(() => els.routeTitleInput?.focus(), 120);
-    }
   });
   els.authModeLoginBtn.addEventListener('click', () => setAuthModalMode('login'));
   els.authModeSignupBtn.addEventListener('click', () => setAuthModalMode('signup'));
@@ -388,8 +372,10 @@ function renderAuthState() {
   els.topAuthBtn.textContent = email ? isTouchMapDevice() ? 'Routes' : 'Log out' : 'Log in';
   els.topAuthBtn.classList.toggle('logged-in', Boolean(email));
   els.routeUploadBtn.disabled = !canUpload;
+  els.routeUploadToggleBtn.textContent = routeUploadOpen ? 'Close upload form' : 'Upload route via GPX';
+  els.routeUploadToggleBtn.classList.toggle('active', routeUploadOpen);
+  els.routeUploadForm.hidden = !routeUploadOpen;
   els.routeUploadForm.classList.toggle('disabled', !canUpload);
-  els.mobileRouteMenu.hidden = !(isTouchMapDevice() && email && routePanelOpen);
 }
 
 function routeAccessKey() {
@@ -507,7 +493,9 @@ function setRoutePanelOpen(open) {
   routePanelOpen = Boolean(open);
   els.routesCard.classList.toggle('open', routePanelOpen);
   els.topRoutesBtn.classList.toggle('active', routePanelOpen);
-  els.mobileRouteMenu.hidden = !(isTouchMapDevice() && authUser && routePanelOpen);
+  els.topAuthBtn.classList.toggle('active', isTouchMapDevice() && authUser && routePanelOpen);
+  if (!routePanelOpen) routeUploadOpen = false;
+  renderAuthState();
   if (routePanelOpen) loadRoutes();
 }
 
@@ -1105,6 +1093,8 @@ async function handleRouteUpload(event) {
     const data = await safeJson(res);
     if (!res.ok) throw new Error(data?.error || 'Upload failed');
     els.routeUploadForm.reset();
+    routeUploadOpen = false;
+    renderAuthState();
     showStatus('Route uploaded.');
     setTimeout(hideStatus, 1200);
     await loadRoutes();
