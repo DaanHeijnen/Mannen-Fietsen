@@ -1312,11 +1312,12 @@ function renderRoutes() {
   updateMapNoticesLayout();
 }
 
-function routeShareUrl(id) {
-  const url = new URL(window.location.href);
-  url.searchParams.set('route', id);
-  url.hash = '';
-  return url.toString();
+function routeShareSlug(route) {
+  return slugifyRouteName(route?.title || route?.id || 'route');
+}
+
+function routeShareText(route) {
+  return `Bekijk deze route:\nFietsen.daanheijnen.nl/?route=${routeShareSlug(route)}`;
 }
 
 function routeIdFromUrl() {
@@ -1331,8 +1332,18 @@ function routeIdFromUrl() {
   return '';
 }
 
+function routeIdFromShareValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const byId = routes.find(route => String(route.id) === raw);
+  if (byId) return byId.id;
+  const wantedSlug = slugifyRouteName(raw);
+  const bySlug = routes.find(route => slugifyRouteName(route.title || '') === wantedSlug);
+  return bySlug?.id || raw;
+}
+
 async function showRouteFromUrl() {
-  const routeId = routeIdFromUrl();
+  const routeId = routeIdFromShareValue(routeIdFromUrl());
   if (!routeId || activeRoute?.id === routeId) return;
   await showRoute(routeId);
 }
@@ -1356,20 +1367,20 @@ async function copyText(text) {
 
 async function shareRoute(id) {
   const route = routes.find(r => r.id === id);
-  const url = routeShareUrl(id);
+  const shareText = routeShareText(route || { id });
   const title = route?.title ? `Fietsroute: ${route.title}` : 'Fietsroute';
   try {
     if (navigator.share) {
-      await navigator.share({ title, text: 'Open deze route op fietsen.daanheijnen.nl', url });
+      await navigator.share({ title, text: shareText });
       return;
     }
-    await copyText(url);
+    await copyText(shareText);
     showStatus('Route link copied. Share it with your friends.');
     setTimeout(hideStatus, 1600);
   } catch (err) {
     if (err?.name === 'AbortError') return;
     console.error(err);
-    window.prompt('Copy this route link:', url);
+    window.prompt('Copy this route link:', shareText);
   }
 }
 
@@ -1847,6 +1858,14 @@ function slugifyFilename(value) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-zA-Z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'route';
+}
+function slugifyRouteName(value) {
+  return String(value || 'route')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
     .slice(0, 80) || 'route';
 }
 function isFiniteNumber(x) { return Number.isFinite(Number(x)); }
